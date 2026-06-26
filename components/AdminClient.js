@@ -39,6 +39,7 @@ export default function AdminClient({ adminProfile }) {
   const [selectedUserId, setSelectedUserId] = useState("");
   const [month, setMonth] = useState(currentMonthKey());
   const [records, setRecords] = useState([]);
+  const [draftRecords, setDraftRecords] = useState([]);
   const [closing, setClosing] = useState(null);
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
   const [message, setMessage] = useState("");
@@ -51,24 +52,19 @@ export default function AdminClient({ adminProfile }) {
 
   const selectedProfile = employees.find((profile) => profile.id === selectedUserId);
   const monthDays = daysInMonth(month);
-  const recordsByDate = useMemo(() => {
+  const savedRecordsByDate = useMemo(() => {
     return Object.fromEntries(records.map((record) => [record.work_date, record]));
   }, [records]);
-  const snapshotRecords = useMemo(() => closing?.snapshot || [], [closing]);
-  const snapshotByDate = useMemo(() => {
-    return Object.fromEntries(snapshotRecords.map((record) => [record.work_date, record]));
-  }, [snapshotRecords]);
-  const sheetRecordsByDate = selectedProfile
-    ? records.length > 0
-      ? recordsByDate
-      : snapshotByDate
-    : {};
-  const monthTotal = selectedProfile
-    ? records.length > 0
-      ? totalMinutes(records)
-      : closing?.total_minutes || 0
-    : 0;
+  const draftRecordsByDate = useMemo(() => {
+    return Object.fromEntries(draftRecords.map((record) => [record.work_date, record]));
+  }, [draftRecords]);
   const isClosed = Boolean(selectedProfile && closing) && records.length === 0;
+  const sheetRecordsByDate = selectedProfile ? draftRecordsByDate : {};
+  const monthTotal = selectedProfile
+    ? isClosed
+      ? closing?.total_minutes || totalMinutes(draftRecords)
+      : totalMinutes(draftRecords)
+    : 0;
 
   useEffect(() => {
     loadProfiles();
@@ -82,6 +78,7 @@ export default function AdminClient({ adminProfile }) {
 
     monthRequestRef.current += 1;
     setRecords([]);
+    setDraftRecords([]);
     setClosing(null);
     setMonthLoading(false);
   }, [selectedUserId, month]);
@@ -113,6 +110,7 @@ export default function AdminClient({ adminProfile }) {
     setMessage("");
     setMonthLoading(true);
     setRecords([]);
+    setDraftRecords([]);
     setClosing(null);
 
     if (!userId) {
@@ -148,8 +146,10 @@ export default function AdminClient({ adminProfile }) {
       return;
     }
 
-    setRecords(recordData || []);
+    const loadedRecords = recordData || [];
+    setRecords(loadedRecords);
     setClosing(closingData || null);
+    setDraftRecords(loadedRecords.length > 0 ? loadedRecords : closingData?.snapshot || []);
   }
 
   async function createEmployee(event) {
@@ -192,29 +192,73 @@ export default function AdminClient({ adminProfile }) {
     await loadProfiles();
   }
 
+  function updateDraftRecord(dateKey, field, value) {
+    if (!selectedProfile || isClosed) return;
+
+    setDraftRecords((current) => {
+      const existing = current.find((record) => record.work_date === dateKey);
+      if (existing) {
+        return current.map((record) =>
+          record.work_date === dateKey ? { ...record, [field]: value } : record
+        );
+      }
+
+      return [
+        ...current,
+        {
+          user_id: selectedProfile.id,
+          work_date: dateKey,
+          entrada: "",
+          saida_almoco: "",
+          retorno_almoco: "",
+          saida: "",
+          observacao: "",
+          [field]: value,
+        },
+      ];
+    });
+  }
+
   async function saveRecord(dateKey, field, value) {
     if (!selectedProfile || isClosed || monthLoading) return;
 
+    const existing = savedRecordsByDate[dateKey];
+    const normalizedValue = field === "observacao" ? value : value || null;
+    const savedValue = field === "observacao" ? existing?.[field] || "" : cleanTime(existing?.[field]);
+    const draftValue = field === "observacao" ? value || "" : value || "";
+
+    if (!existing && !draftValue) return;
+    if (existing && savedValue === draftValue) return;
+
     setMessage("");
-    const existing = recordsByDate[dateKey];
     const payload = {
       user_id: selectedProfile.id,
       work_date: dateKey,
-      [field]: field === "observacao" ? value : value || null,
+      [field]: normalizedValue,
     };
 
-    const request = existing
-      ? supabase.from("time_records").update(payload).eq("id", existing.id)
-      : supabase.from("time_records").insert(payload);
-
-    const { error } = await request;
+    const { data, error } = await supabase
+      .from("time_records")
+      .upsert(payload, { onConflict: "user_id,work_date" })
+      .select("*")
+      .single();
 
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    await loadMonth(selectedProfile.id, month);
+    replaceLocalRecord(data);
+  }
+
+  function replaceLocalRecord(data) {
+    setRecords((current) => replaceRecord(current, data));
+    setDraftRecords((current) => replaceRecord(current, data));
+  }
+
+  function replaceRecord(current, data) {
+    const withoutRecord = current.filter((record) => record.work_date !== data.work_date);
+    return [...withoutRecord, data].sort((a, b) => a.work_date.localeCompare(b.work_date));
   }
 
   async function closeMonth() {
@@ -484,7 +528,11 @@ export default function AdminClient({ adminProfile }) {
                           type="time"
                           value={cleanTime(record[field])}
                           disabled={isClosed || !selectedProfile || monthLoading}
-                          onChange={(event) => saveRecord(day.key, field, event.target.value)}
+                          onChange={(event) => updateDraftRecord(day.key, field, event.target.value)}
+                          onBlur={(event) => saveRecord(day.key, field, event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
                         />
                       </td>
                     ))}
@@ -493,7 +541,11 @@ export default function AdminClient({ adminProfile }) {
                       <input
                         value={record.observacao || ""}
                         disabled={isClosed || !selectedProfile || monthLoading}
-                        onChange={(event) => saveRecord(day.key, "observacao", event.target.value)}
+                        onChange={(event) => updateDraftRecord(day.key, "observacao", event.target.value)}
+                        onBlur={(event) => saveRecord(day.key, "observacao", event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
                       />
                     </td>
                   </tr>
