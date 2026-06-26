@@ -322,6 +322,42 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.punch-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.punch-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.punch-field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.punch-note {
+  grid-column: span 2;
+}
+
+.day-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.day-actions .metric {
+  min-width: 132px;
+}
 .notice {
   display: flex;
   align-items: center;
@@ -483,7 +519,8 @@ td:last-child input {
   }
 
   .admin-grid,
-  .punch-grid {
+  .punch-grid,
+  .punch-form {
     grid-template-columns: 1fr;
   }
 
@@ -493,6 +530,10 @@ td:last-child input {
 
   .metric {
     text-align: left;
+  }
+
+  .punch-note {
+    grid-column: auto;
   }
 }
 

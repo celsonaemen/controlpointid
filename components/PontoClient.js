@@ -1,38 +1,50 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Clock, LogOut, Printer, RefreshCcw } from "lucide-react";
+import { Clock, LogOut, Printer, RefreshCcw, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   FIELD_LABELS,
   TIME_FIELDS,
-  formatRecordDuration,
+  calculateRecordState,
   cleanTime,
   currentMonthKey,
   daysInMonth,
   endOfMonthKey,
   formatDuration,
   formatMonthLabel,
+  formatRecordDuration,
   monthStartKey,
   todayKey,
   totalMinutes,
 } from "@/lib/date";
 
+const emptyDraft = {
+  entrada: "",
+  saida_almoco: "",
+  retorno_almoco: "",
+  saida: "",
+  observacao: "",
+};
+
 export default function PontoClient({ userId, initialProfile }) {
   const supabase = useMemo(() => createClient(), []);
   const [month, setMonth] = useState(currentMonthKey());
   const [records, setRecords] = useState([]);
-  const [busy, setBusy] = useState("");
+  const [draftToday, setDraftToday] = useState(emptyDraft);
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const today = todayKey();
+  const todayDraftKey = `controlpointid:ponto-draft:${userId}:${today}`;
 
   const recordsByDate = useMemo(() => {
     return Object.fromEntries(records.map((record) => [record.work_date, record]));
   }, [records]);
 
-  const todayRecord = recordsByDate[today] || {};
   const monthDays = daysInMonth(month);
   const monthTotal = totalMinutes(records);
+  const draftState = calculateRecordState(draftToday);
+  const canSaveToday = draftState.valid && draftState.complete && !busy;
 
   useEffect(() => {
     loadRecords();
@@ -52,26 +64,114 @@ export default function PontoClient({ userId, initialProfile }) {
       return;
     }
 
-    setRecords(data || []);
+    const loadedRecords = data || [];
+    setRecords(loadedRecords);
+
+    let savedToday = loadedRecords.find((record) => record.work_date === today);
+
+    if (!savedToday && month !== currentMonthKey()) {
+      const { data: todayData, error: todayError } = await supabase
+        .from("time_records")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("work_date", today)
+        .maybeSingle();
+
+      if (todayError) {
+        setMessage(todayError.message);
+        return;
+      }
+
+      savedToday = todayData;
+    }
+
+    syncTodayDraft(savedToday);
   }
 
-  async function register(kind) {
-    setBusy(kind);
+  function syncTodayDraft(savedRecord) {
+    const storedDraft = readStoredDraft();
+    setDraftToday(storedDraft || draftFromRecord(savedRecord));
+  }
+
+  function readStoredDraft() {
+    if (typeof window === "undefined") return null;
+
+    try {
+      const rawDraft = window.localStorage.getItem(todayDraftKey);
+      if (!rawDraft) return null;
+      return normalizeDraft(JSON.parse(rawDraft));
+    } catch {
+      window.localStorage.removeItem(todayDraftKey);
+      return null;
+    }
+  }
+
+  function persistDraft(draft) {
+    if (typeof window === "undefined") return;
+
+    if (!hasDraftValue(draft)) {
+      window.localStorage.removeItem(todayDraftKey);
+      return;
+    }
+
+    window.localStorage.setItem(todayDraftKey, JSON.stringify(normalizeDraft(draft)));
+  }
+
+  function clearStoredDraft() {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(todayDraftKey);
+  }
+
+  function updateDraft(field, value) {
+    const nextDraft = normalizeDraft({ ...draftToday, [field]: value });
+    setDraftToday(nextDraft);
+    persistDraft(nextDraft);
+    setMessage("");
+  }
+
+  async function saveToday(draft = draftToday, options = {}) {
+    const nextDraft = normalizeDraft(draft);
+    const state = calculateRecordState(nextDraft);
+
+    if (!state.valid) {
+      setMessage("Horarios invalidos. Confira a ordem dos campos.");
+      return;
+    }
+
+    if (!state.complete) {
+      if (!options.silent) {
+        setMessage("Preencha a saida final para concluir o dia.");
+      }
+      return;
+    }
+
+    setBusy(true);
     setMessage("");
 
-    const { error } = await supabase.rpc("clock_time", {
-      p_kind: kind,
+    const { data, error } = await supabase.rpc("save_day_record", {
+      p_work_date: today,
+      p_entrada: nextDraft.entrada || null,
+      p_saida_almoco: nextDraft.saida_almoco || null,
+      p_retorno_almoco: nextDraft.retorno_almoco || null,
+      p_saida: nextDraft.saida || null,
+      p_observacao: nextDraft.observacao || "",
     });
 
-    setBusy("");
+    setBusy(false);
 
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    setMessage("Ponto registrado.");
-    await loadRecords();
+    clearStoredDraft();
+    setDraftToday(draftFromRecord(data));
+
+    if (data?.work_date?.slice(0, 7) === month) {
+      setRecords((current) => replaceRecord(current, data));
+    }
+
+    setMessage("Dia concluido e salvo no mes.");
   }
 
   async function signOut() {
@@ -92,7 +192,7 @@ export default function PontoClient({ userId, initialProfile }) {
           <p className="muted">{initialProfile.full_name}</p>
         </div>
         <div className="header-actions">
-          <button className="secondary" type="button" onClick={loadRecords}>
+          <button className="secondary" type="button" onClick={loadRecords} disabled={busy}>
             <RefreshCcw size={18} />
             Atualizar
           </button>
@@ -125,22 +225,44 @@ export default function PontoClient({ userId, initialProfile }) {
           </div>
           <Clock size={24} />
         </div>
-        <div className="punch-grid">
-          {TIME_FIELDS.map((field) => {
-            const registered = Boolean(todayRecord[field]);
-            return (
-              <button
-                className={registered ? "secondary" : "primary"}
-                type="button"
-                key={field}
-                onClick={() => register(field)}
-                disabled={registered || Boolean(busy)}
-              >
-                {busy === field ? "Registrando..." : FIELD_LABELS[field]}
-                <span>{registered ? cleanTime(todayRecord[field]) : "--:--"}</span>
-              </button>
-            );
-          })}
+        <div className="punch-form">
+          {TIME_FIELDS.map((field) => (
+            <label className="punch-field" key={field}>
+              <span>{FIELD_LABELS[field]}</span>
+              <input
+                type="time"
+                value={draftToday[field] || ""}
+                disabled={busy}
+                onChange={(event) => updateDraft(field, event.target.value)}
+                onBlur={(event) => {
+                  if (field === "saida") {
+                    saveToday({ ...draftToday, [field]: event.currentTarget.value }, { silent: true });
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            </label>
+          ))}
+          <label className="punch-field punch-note">
+            <span>Observacao</span>
+            <input
+              value={draftToday.observacao || ""}
+              disabled={busy}
+              onChange={(event) => updateDraft("observacao", event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="day-actions">
+          <div className="metric">
+            <span>Total do dia</span>
+            <strong>{formatRecordDuration(draftToday)}</strong>
+          </div>
+          <button className="primary" type="button" onClick={() => saveToday()} disabled={!canSaveToday}>
+            <Save size={18} />
+            {busy ? "Salvando..." : "Concluir dia"}
+          </button>
         </div>
         {message ? <div className="notice">{message}</div> : null}
       </section>
@@ -193,6 +315,29 @@ export default function PontoClient({ userId, initialProfile }) {
       />
     </main>
   );
+}
+
+function normalizeDraft(draft) {
+  return {
+    entrada: cleanTime(draft?.entrada),
+    saida_almoco: cleanTime(draft?.saida_almoco),
+    retorno_almoco: cleanTime(draft?.retorno_almoco),
+    saida: cleanTime(draft?.saida),
+    observacao: draft?.observacao || "",
+  };
+}
+
+function draftFromRecord(record) {
+  return normalizeDraft(record || emptyDraft);
+}
+
+function hasDraftValue(draft) {
+  return TIME_FIELDS.some((field) => Boolean(draft?.[field])) || Boolean(draft?.observacao);
+}
+
+function replaceRecord(current, data) {
+  const withoutRecord = current.filter((record) => record.work_date !== data.work_date);
+  return [...withoutRecord, data].sort((a, b) => a.work_date.localeCompare(b.work_date));
 }
 
 function PrintSheet({ month, profile, days, recordsByDate, monthTotal }) {
