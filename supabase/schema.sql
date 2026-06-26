@@ -140,9 +140,23 @@ begin
     return 0;
   end if;
 
+  if p_saida < p_entrada then
+    return 0;
+  end if;
+
+  if (p_saida_almoco is null) <> (p_retorno_almoco is null) then
+    return 0;
+  end if;
+
   v_total := extract(epoch from (p_saida - p_entrada))::integer / 60;
 
   if p_saida_almoco is not null and p_retorno_almoco is not null then
+    if p_saida_almoco < p_entrada
+      or p_retorno_almoco < p_saida_almoco
+      or p_retorno_almoco > p_saida then
+      return 0;
+    end if;
+
     v_total := v_total - (extract(epoch from (p_retorno_almoco - p_saida_almoco))::integer / 60);
   end if;
 

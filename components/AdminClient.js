@@ -13,7 +13,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import {
   TIME_FIELDS,
-  calculateRecordMinutes,
+  formatRecordDuration,
   cleanTime,
   currentMonthKey,
   daysInMonth,
@@ -407,7 +407,7 @@ export default function AdminClient({ adminProfile }) {
                         />
                       </td>
                     ))}
-                    <td className="strong">{formatDuration(calculateRecordMinutes(record))}</td>
+                    <td className="strong">{formatRecordDuration(record)}</td>
                     <td>
                       <input
                         value={record.observacao || ""}
@@ -480,7 +480,7 @@ function PrintSheet({ month, profile, days, recordsByDate, monthTotal, closedAt 
                 {TIME_FIELDS.map((field) => (
                   <td key={field}>{cleanTime(record[field])}</td>
                 ))}
-                <td>{formatDuration(calculateRecordMinutes(record))}</td>
+                <td>{formatRecordDuration(record)}</td>
                 <td>{record.observacao || ""}</td>
               </tr>
             );
