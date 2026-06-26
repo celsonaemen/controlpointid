@@ -9,6 +9,7 @@ import {
   Printer,
   RefreshCcw,
   Save,
+  Users,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -285,6 +286,81 @@ export default function AdminClient({ adminProfile }) {
     await loadMonth(selectedProfile.id, month);
   }
 
+  async function closeAllMonths() {
+    if (employees.length === 0 || loading || monthLoading) return;
+
+    const ok = window.confirm(
+      `Fechar ${formatMonthLabel(month)} de todos os ${employees.length} funcionarios ativos vai salvar snapshots e limpar os registros ativos. Confirma?`
+    );
+
+    if (!ok) return;
+
+    const targetMonth = monthStartKey(month);
+    const employeeIds = employees.map((employee) => employee.id);
+
+    setLoading(true);
+    setMessage("");
+
+    const { data: existingClosings, error: closingError } = await supabase
+      .from("month_closings")
+      .select("user_id")
+      .eq("month", targetMonth)
+      .in("user_id", employeeIds);
+
+    if (closingError) {
+      setLoading(false);
+      setMessage(closingError.message);
+      return;
+    }
+
+    const closedUserIds = new Set((existingClosings || []).map((row) => row.user_id));
+    const pendingEmployees = employees.filter((employee) => !closedUserIds.has(employee.id));
+    const errors = [];
+    let closedCount = 0;
+
+    for (const employee of pendingEmployees) {
+      const { error } = await supabase.rpc("close_month", {
+        p_user_id: employee.id,
+        p_month: targetMonth,
+      });
+
+      if (error) {
+        errors.push(`${employee.full_name || employee.email}: ${error.message}`);
+        continue;
+      }
+
+      closedCount += 1;
+    }
+
+    setLoading(false);
+
+    if (selectedProfile) {
+      await loadMonth(selectedProfile.id, month);
+    }
+
+    const skippedCount = employees.length - pendingEmployees.length;
+    const summary = [];
+
+    if (closedCount > 0) {
+      summary.push(
+        `${closedCount} funcionario${closedCount === 1 ? "" : "s"} fechado${closedCount === 1 ? "" : "s"}`
+      );
+    }
+
+    if (skippedCount > 0) {
+      summary.push(
+        `${skippedCount} ja estava${skippedCount === 1 ? "" : "m"} fechado${skippedCount === 1 ? "" : "s"}`
+      );
+    }
+
+    if (errors.length > 0) {
+      summary.push(
+        `${errors.length} erro${errors.length === 1 ? "" : "s"}: ${errors.slice(0, 3).join(" | ")}`
+      );
+    }
+
+    setMessage(summary.join(". ") || "Nenhum funcionario pendente para fechar.");
+  }
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = "/login";
@@ -339,6 +415,15 @@ export default function AdminClient({ adminProfile }) {
           >
             <Lock size={18} />
             Fechar mes
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            onClick={closeAllMonths}
+            disabled={loading || monthLoading || employees.length === 0}
+          >
+            <Users size={18} />
+            Fechar todos
           </button>
           <button className="secondary icon-only" type="button" onClick={signOut} title="Sair">
             <LogOut size={18} />
