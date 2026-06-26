@@ -1,4 +1,5 @@
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import ThemeToggle from "@/components/ThemeToggle";
 import "./globals.css";
 
 export const metadata = {
@@ -10,6 +11,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="pt-BR">
       <body>
+        <ThemeToggle />
         {children}
         <SpeedInsights />
       </body>

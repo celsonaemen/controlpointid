@@ -1,6 +1,10 @@
 :root {
+  color-scheme: light;
   --bg: #eef2f6;
   --panel: #ffffff;
+  --field: #ffffff;
+  --header-bg: #f6f8fb;
+  --weekend-bg: #fbfcfd;
   --ink: #17202a;
   --muted: #667085;
   --line: #d7dee8;
@@ -15,6 +19,26 @@
   --shadow: 0 12px 28px rgba(20, 31, 44, 0.08);
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101418;
+  --panel: #171d23;
+  --field: #11171d;
+  --header-bg: #202833;
+  --weekend-bg: #141a20;
+  --ink: #e8edf2;
+  --muted: #a8b2bf;
+  --line: #2d3743;
+  --line-strong: #435164;
+  --accent: #2fa991;
+  --accent-dark: #5ecab4;
+  --accent-soft: #12342e;
+  --danger: #ff9b91;
+  --danger-soft: #361915;
+  --success: #6bd5bd;
+  --success-soft: #12342e;
+  --shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
 * {
   box-sizing: border-box;
 }
@@ -63,15 +87,15 @@ select {
   width: 100%;
   min-height: 38px;
   border: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--field);
   color: var(--ink);
   padding: 0 10px;
 }
 
 input:disabled,
 select:disabled {
-  background: #f3f5f8;
-  color: #7a8594;
+  background: var(--header-bg);
+  color: var(--muted);
 }
 
 label {
@@ -114,7 +138,7 @@ h2 {
 
 .secondary {
   border-color: var(--line);
-  background: #ffffff;
+  background: var(--field);
   color: var(--ink);
 }
 
@@ -146,6 +170,24 @@ h2 {
   font-size: 13px;
 }
 
+
+.theme-toggle {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 30;
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.theme-toggle:hover {
+  border-color: var(--line-strong);
+}
 .login-page {
   min-height: 100vh;
   display: grid;
@@ -286,7 +328,7 @@ h2 {
   gap: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--header-bg);
   color: var(--ink);
   padding: 10px 12px;
   margin: 12px 0;
@@ -387,8 +429,8 @@ td {
 }
 
 th {
-  background: #f6f8fb;
-  color: #344054;
+  background: var(--header-bg);
+  color: var(--muted);
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
@@ -407,7 +449,7 @@ td:last-child input {
 }
 
 .weekend td {
-  background: #fbfcfd;
+  background: var(--weekend-bg);
 }
 
 .strong {
@@ -461,8 +503,12 @@ td:last-child input {
   }
 
   body {
-    background: #ffffff;
+    background: var(--field);
     color: #000000;
+  }
+
+  .theme-toggle {
+    display: none;
   }
 
   .app > :not(.print-sheet) {

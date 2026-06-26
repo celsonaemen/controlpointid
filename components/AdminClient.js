@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Lock,
@@ -13,13 +13,13 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import {
   TIME_FIELDS,
-  formatRecordDuration,
   cleanTime,
   currentMonthKey,
   daysInMonth,
   endOfMonthKey,
   formatDuration,
   formatMonthLabel,
+  formatRecordDuration,
   monthStartKey,
   totalMinutes,
 } from "@/lib/date";
@@ -34,6 +34,7 @@ const emptyEmployee = {
 
 export default function AdminClient({ adminProfile }) {
   const supabase = useMemo(() => createClient(), []);
+  const monthRequestRef = useRef(0);
   const [profiles, setProfiles] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [month, setMonth] = useState(currentMonthKey());
@@ -42,8 +43,13 @@ export default function AdminClient({ adminProfile }) {
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [monthLoading, setMonthLoading] = useState(false);
 
-  const selectedProfile = profiles.find((profile) => profile.id === selectedUserId);
+  const employees = useMemo(() => {
+    return profiles.filter((profile) => profile.role === "employee" && profile.active);
+  }, [profiles]);
+
+  const selectedProfile = employees.find((profile) => profile.id === selectedUserId);
   const monthDays = daysInMonth(month);
   const recordsByDate = useMemo(() => {
     return Object.fromEntries(records.map((record) => [record.work_date, record]));
@@ -52,9 +58,17 @@ export default function AdminClient({ adminProfile }) {
   const snapshotByDate = useMemo(() => {
     return Object.fromEntries(snapshotRecords.map((record) => [record.work_date, record]));
   }, [snapshotRecords]);
-  const sheetRecordsByDate = records.length > 0 ? recordsByDate : snapshotByDate;
-  const monthTotal = records.length > 0 ? totalMinutes(records) : closing?.total_minutes || 0;
-  const isClosed = Boolean(closing) && records.length === 0;
+  const sheetRecordsByDate = selectedProfile
+    ? records.length > 0
+      ? recordsByDate
+      : snapshotByDate
+    : {};
+  const monthTotal = selectedProfile
+    ? records.length > 0
+      ? totalMinutes(records)
+      : closing?.total_minutes || 0
+    : 0;
+  const isClosed = Boolean(selectedProfile && closing) && records.length === 0;
 
   useEffect(() => {
     loadProfiles();
@@ -62,8 +76,14 @@ export default function AdminClient({ adminProfile }) {
 
   useEffect(() => {
     if (selectedUserId) {
-      loadMonth();
+      loadMonth(selectedUserId, month);
+      return;
     }
+
+    monthRequestRef.current += 1;
+    setRecords([]);
+    setClosing(null);
+    setMonthLoading(false);
   }, [selectedUserId, month]);
 
   async function loadProfiles() {
@@ -77,34 +97,54 @@ export default function AdminClient({ adminProfile }) {
       return;
     }
 
-    setProfiles(data || []);
-    if (!selectedUserId && data?.length) {
-      const firstEmployee = data.find((profile) => profile.role === "employee") || data[0];
-      setSelectedUserId(firstEmployee.id);
+    const list = data || [];
+    const employeeList = list.filter((profile) => profile.role === "employee" && profile.active);
+    const selectedStillAvailable = employeeList.some((profile) => profile.id === selectedUserId);
+
+    setProfiles(list);
+    if (!selectedStillAvailable) {
+      setSelectedUserId(employeeList[0]?.id || "");
     }
   }
 
-  async function loadMonth() {
+  async function loadMonth(userId = selectedUserId, targetMonth = month) {
+    const requestId = monthRequestRef.current + 1;
+    monthRequestRef.current = requestId;
     setMessage("");
-    const [{ data: recordData, error: recordError }, { data: closingData }] =
+    setMonthLoading(true);
+    setRecords([]);
+    setClosing(null);
+
+    if (!userId) {
+      setMonthLoading(false);
+      return;
+    }
+
+    const [{ data: recordData, error: recordError }, { data: closingData, error: closingError }] =
       await Promise.all([
         supabase
           .from("time_records")
           .select("*")
-          .eq("user_id", selectedUserId)
-          .gte("work_date", monthStartKey(month))
-          .lte("work_date", endOfMonthKey(month))
+          .eq("user_id", userId)
+          .gte("work_date", monthStartKey(targetMonth))
+          .lte("work_date", endOfMonthKey(targetMonth))
           .order("work_date", { ascending: true }),
         supabase
           .from("month_closings")
           .select("*")
-          .eq("user_id", selectedUserId)
-          .eq("month", monthStartKey(month))
+          .eq("user_id", userId)
+          .eq("month", monthStartKey(targetMonth))
           .maybeSingle(),
       ]);
 
-    if (recordError) {
-      setMessage(recordError.message);
+    if (requestId !== monthRequestRef.current) {
+      return;
+    }
+
+    setMonthLoading(false);
+
+    if (recordError || closingError) {
+      setMessage(recordError?.message || closingError?.message || "Nao foi possivel carregar a folha.");
       return;
     }
 
@@ -153,12 +193,12 @@ export default function AdminClient({ adminProfile }) {
   }
 
   async function saveRecord(dateKey, field, value) {
-    if (!selectedUserId || isClosed) return;
+    if (!selectedProfile || isClosed || monthLoading) return;
 
     setMessage("");
     const existing = recordsByDate[dateKey];
     const payload = {
-      user_id: selectedUserId,
+      user_id: selectedProfile.id,
       work_date: dateKey,
       [field]: field === "observacao" ? value : value || null,
     };
@@ -174,11 +214,11 @@ export default function AdminClient({ adminProfile }) {
       return;
     }
 
-    await loadMonth();
+    await loadMonth(selectedProfile.id, month);
   }
 
   async function closeMonth() {
-    if (!selectedUserId) return;
+    if (!selectedProfile || isClosed) return;
     const ok = window.confirm(
       "Fechar este mes vai salvar um snapshot e limpar os registros ativos. Confirma?"
     );
@@ -187,7 +227,7 @@ export default function AdminClient({ adminProfile }) {
 
     setLoading(true);
     const { error } = await supabase.rpc("close_month", {
-      p_user_id: selectedUserId,
+      p_user_id: selectedProfile.id,
       p_month: monthStartKey(month),
     });
     setLoading(false);
@@ -198,7 +238,7 @@ export default function AdminClient({ adminProfile }) {
     }
 
     setMessage("Mes fechado e registros ativos limpos.");
-    await loadMonth();
+    await loadMonth(selectedProfile.id, month);
   }
 
   async function signOut() {
@@ -206,7 +246,17 @@ export default function AdminClient({ adminProfile }) {
     window.location.href = "/login";
   }
 
+  function selectProfile(profile) {
+    if (profile.role === "employee" && profile.active) {
+      setSelectedUserId(profile.id);
+      return;
+    }
+
+    setMessage("Administradores e usuarios inativos nao possuem folha de ponto.");
+  }
+
   function printSheet() {
+    if (!selectedProfile) return;
     window.print();
   }
 
@@ -219,15 +269,30 @@ export default function AdminClient({ adminProfile }) {
           <p className="muted">{adminProfile.full_name}</p>
         </div>
         <div className="header-actions">
-          <button className="secondary" type="button" onClick={loadMonth}>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => loadMonth()}
+            disabled={!selectedProfile || monthLoading}
+          >
             <RefreshCcw size={18} />
             Atualizar
           </button>
-          <button className="secondary" type="button" onClick={printSheet}>
+          <button
+            className="secondary"
+            type="button"
+            onClick={printSheet}
+            disabled={!selectedProfile}
+          >
             <Printer size={18} />
             Imprimir folha
           </button>
-          <button className="primary" type="button" onClick={closeMonth} disabled={loading}>
+          <button
+            className="primary"
+            type="button"
+            onClick={closeMonth}
+            disabled={loading || !selectedProfile || isClosed || monthLoading}
+          >
             <Lock size={18} />
             Fechar mes
           </button>
@@ -308,43 +373,51 @@ export default function AdminClient({ adminProfile }) {
         <section className="panel people-panel">
           <div className="panel-heading">
             <h2>Usuarios</h2>
-            <span className="muted">{profiles.length} cadastrados</span>
+            <span className="muted">
+              {employees.length} funcionarios ativos de {profiles.length} usuarios
+            </span>
           </div>
           <div className="people-list">
-            {profiles.map((profile) => (
-              <div
-                className={`person-row ${profile.id === selectedUserId ? "selected" : ""}`}
-                key={profile.id}
-              >
-                <button type="button" onClick={() => setSelectedUserId(profile.id)}>
-                  <strong>{profile.full_name || profile.email}</strong>
-                  <span>{profile.email}</span>
-                </button>
-                <select
-                  value={profile.role}
-                  onChange={(event) =>
-                    updateProfile(profile.id, {
-                      role: event.target.value,
-                    })
-                  }
+            {profiles.map((profile) => {
+              const canSelectSheet = profile.role === "employee" && profile.active;
+              return (
+                <div
+                  className={`person-row ${canSelectSheet && profile.id === selectedUserId ? "selected" : ""}`}
+                  key={profile.id}
                 >
-                  <option value="employee">Funcionario</option>
-                  <option value="admin">Admin</option>
-                </select>
-                <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={profile.active}
+                  <button type="button" onClick={() => selectProfile(profile)}>
+                    <strong>{profile.full_name || profile.email}</strong>
+                    <span>
+                      {profile.email} - {profile.role === "admin" ? "admin" : "funcionario"}
+                      {!profile.active ? " inativo" : ""}
+                    </span>
+                  </button>
+                  <select
+                    value={profile.role}
                     onChange={(event) =>
                       updateProfile(profile.id, {
-                        active: event.target.checked,
+                        role: event.target.value,
                       })
                     }
-                  />
-                  Ativo
-                </label>
-              </div>
-            ))}
+                  >
+                    <option value="employee">Funcionario</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  <label className="inline-check">
+                    <input
+                      type="checkbox"
+                      checked={profile.active}
+                      onChange={(event) =>
+                        updateProfile(profile.id, {
+                          active: event.target.checked,
+                        })
+                      }
+                    />
+                    Ativo
+                  </label>
+                </div>
+              );
+            })}
           </div>
         </section>
       </section>
@@ -354,7 +427,7 @@ export default function AdminClient({ adminProfile }) {
           <div>
             <h2>Folha mensal</h2>
             <p className="muted">
-              {selectedProfile?.full_name || "Selecione um usuario"} - {formatMonthLabel(month)}
+              {selectedProfile?.full_name || "Selecione um funcionario"} - {formatMonthLabel(month)}
             </p>
           </div>
           <div className="month-controls">
@@ -368,6 +441,14 @@ export default function AdminClient({ adminProfile }) {
             </div>
           </div>
         </div>
+
+        {!selectedProfile ? (
+          <div className="notice">Cadastre ou ative um funcionario para lancar a folha de ponto.</div>
+        ) : null}
+
+        {monthLoading ? (
+          <div className="notice">Carregando folha do funcionario selecionado...</div>
+        ) : null}
 
         {isClosed ? (
           <div className="notice success">
@@ -402,7 +483,7 @@ export default function AdminClient({ adminProfile }) {
                         <input
                           type="time"
                           value={cleanTime(record[field])}
-                          disabled={isClosed || !selectedUserId}
+                          disabled={isClosed || !selectedProfile || monthLoading}
                           onChange={(event) => saveRecord(day.key, field, event.target.value)}
                         />
                       </td>
@@ -411,7 +492,7 @@ export default function AdminClient({ adminProfile }) {
                     <td>
                       <input
                         value={record.observacao || ""}
-                        disabled={isClosed || !selectedUserId}
+                        disabled={isClosed || !selectedProfile || monthLoading}
                         onChange={(event) => saveRecord(day.key, "observacao", event.target.value)}
                       />
                     </td>
