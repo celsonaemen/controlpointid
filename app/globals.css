@@ -358,6 +358,27 @@ h2 {
 .day-actions .metric {
   min-width: 132px;
 }
+.date-controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.date-controls label {
+  min-width: 190px;
+}
+
+.selected-day td {
+  box-shadow: inset 0 0 0 999px rgba(34, 113, 177, 0.08);
+}
+
+.correction-cell button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
 .notice {
   display: flex;
   align-items: center;
@@ -442,6 +463,20 @@ h2 {
   width: 16px;
   min-height: 16px;
   padding: 0;
+}
+.password-reset {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.password-reset input {
+  min-width: 0;
+}
+
+.password-reset button {
+  min-height: 40px;
 }
 
 .table-wrap {
@@ -534,6 +569,19 @@ td:last-child input {
 
   .punch-note {
     grid-column: auto;
+  }
+
+  .password-reset {
+    grid-template-columns: 1fr;
+  }
+
+  .date-controls {
+    align-items: stretch;
+  }
+
+  .date-controls label,
+  .date-controls button {
+    width: 100%;
   }
 }
 

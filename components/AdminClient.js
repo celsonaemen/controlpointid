@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
+  KeyRound,
   Lock,
   LogOut,
   Plus,
@@ -43,6 +44,8 @@ export default function AdminClient({ adminProfile }) {
   const [draftRecords, setDraftRecords] = useState([]);
   const [closing, setClosing] = useState(null);
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
+  const [passwordEdits, setPasswordEdits] = useState({});
+  const [passwordLoading, setPasswordLoading] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [monthLoading, setMonthLoading] = useState(false);
@@ -191,6 +194,39 @@ export default function AdminClient({ adminProfile }) {
     }
 
     await loadProfiles();
+  }
+
+
+  async function changePassword(profile) {
+    const password = passwordEdits[profile.id] || "";
+
+    if (password.length < 6) {
+      setMessage("A nova senha precisa ter pelo menos 6 caracteres.");
+      return;
+    }
+
+    const ok = window.confirm(`Alterar a senha de ${profile.full_name || profile.email}?`);
+    if (!ok) return;
+
+    setPasswordLoading(profile.id);
+    setMessage("");
+
+    const response = await fetch(`/api/admin/employees/${profile.id}/password`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const result = await response.json();
+
+    setPasswordLoading("");
+
+    if (!response.ok) {
+      setMessage(result.error || "Nao foi possivel alterar a senha.");
+      return;
+    }
+
+    setPasswordEdits((current) => ({ ...current, [profile.id]: "" }));
+    setMessage(`Senha alterada para ${profile.full_name || profile.email}.`);
   }
 
   function updateDraftRecord(dateKey, field, value) {
@@ -544,6 +580,29 @@ export default function AdminClient({ adminProfile }) {
                     />
                     Ativo
                   </label>
+                  <div className="password-reset">
+                    <input
+                      type="password"
+                      minLength={6}
+                      placeholder="Nova senha"
+                      value={passwordEdits[profile.id] || ""}
+                      onChange={(event) =>
+                        setPasswordEdits((current) => ({
+                          ...current,
+                          [profile.id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => changePassword(profile)}
+                      disabled={passwordLoading === profile.id || !(passwordEdits[profile.id] || "").trim()}
+                    >
+                      <KeyRound size={16} />
+                      {passwordLoading === profile.id ? "Alterando..." : "Alterar senha"}
+                    </button>
+                  </div>
                 </div>
               );
             })}

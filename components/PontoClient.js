@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Clock, LogOut, Printer, RefreshCcw, Save } from "lucide-react";
+import { Calendar, Clock, LogOut, Pencil, Printer, RefreshCcw, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   FIELD_LABELS,
@@ -29,26 +29,35 @@ const emptyDraft = {
 
 export default function PontoClient({ userId, initialProfile }) {
   const supabase = useMemo(() => createClient(), []);
-  const [month, setMonth] = useState(currentMonthKey());
+  const today = todayKey();
+  const currentMonth = currentMonthKey();
+  const [month, setMonth] = useState(currentMonth);
+  const [selectedDate, setSelectedDate] = useState(today);
   const [records, setRecords] = useState([]);
-  const [draftToday, setDraftToday] = useState(emptyDraft);
+  const [draftRecord, setDraftRecord] = useState(emptyDraft);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const today = todayKey();
-  const todayDraftKey = `controlpointid:ponto-draft:${userId}:${today}`;
 
   const recordsByDate = useMemo(() => {
     return Object.fromEntries(records.map((record) => [record.work_date, record]));
   }, [records]);
 
   const monthDays = daysInMonth(month);
+  const monthStart = monthStartKey(month);
+  const monthEnd = endOfMonthKey(month);
+  const maxSelectableDate = minDateKey(monthEnd, today);
+  const selectedDay = monthDays.find((day) => day.key === selectedDate);
+  const draftState = calculateRecordState(draftRecord);
+  const canSaveDay = draftState.valid && draftState.complete && !busy;
   const monthTotal = totalMinutes(records);
-  const draftState = calculateRecordState(draftToday);
-  const canSaveToday = draftState.valid && draftState.complete && !busy;
 
   useEffect(() => {
     loadRecords();
   }, [month]);
+
+  useEffect(() => {
+    syncSelectedDraft(recordsByDate[selectedDate]);
+  }, [selectedDate, records]);
 
   async function loadRecords() {
     const { data, error } = await supabase
@@ -64,72 +73,88 @@ export default function PontoClient({ userId, initialProfile }) {
       return;
     }
 
-    const loadedRecords = data || [];
-    setRecords(loadedRecords);
-
-    let savedToday = loadedRecords.find((record) => record.work_date === today);
-
-    if (!savedToday && month !== currentMonthKey()) {
-      const { data: todayData, error: todayError } = await supabase
-        .from("time_records")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("work_date", today)
-        .maybeSingle();
-
-      if (todayError) {
-        setMessage(todayError.message);
-        return;
-      }
-
-      savedToday = todayData;
-    }
-
-    syncTodayDraft(savedToday);
+    setRecords(data || []);
   }
 
-  function syncTodayDraft(savedRecord) {
-    const storedDraft = readStoredDraft();
-    setDraftToday(storedDraft || draftFromRecord(savedRecord));
+  function syncSelectedDraft(savedRecord) {
+    const storedDraft = readStoredDraft(selectedDate);
+    setDraftRecord(storedDraft || draftFromRecord(savedRecord));
   }
 
-  function readStoredDraft() {
+  function draftKey(dateKey) {
+    return `controlpointid:ponto-draft:${userId}:${dateKey}`;
+  }
+
+  function readStoredDraft(dateKey) {
     if (typeof window === "undefined") return null;
 
+    const key = draftKey(dateKey);
+
     try {
-      const rawDraft = window.localStorage.getItem(todayDraftKey);
+      const rawDraft = window.localStorage.getItem(key);
       if (!rawDraft) return null;
       return normalizeDraft(JSON.parse(rawDraft));
     } catch {
-      window.localStorage.removeItem(todayDraftKey);
+      window.localStorage.removeItem(key);
       return null;
     }
   }
 
-  function persistDraft(draft) {
+  function persistDraft(dateKey, draft) {
     if (typeof window === "undefined") return;
 
+    const key = draftKey(dateKey);
+
     if (!hasDraftValue(draft)) {
-      window.localStorage.removeItem(todayDraftKey);
+      window.localStorage.removeItem(key);
       return;
     }
 
-    window.localStorage.setItem(todayDraftKey, JSON.stringify(normalizeDraft(draft)));
+    window.localStorage.setItem(key, JSON.stringify(normalizeDraft(draft)));
   }
 
-  function clearStoredDraft() {
+  function clearStoredDraft(dateKey) {
     if (typeof window === "undefined") return;
-    window.localStorage.removeItem(todayDraftKey);
+    window.localStorage.removeItem(draftKey(dateKey));
   }
 
-  function updateDraft(field, value) {
-    const nextDraft = normalizeDraft({ ...draftToday, [field]: value });
-    setDraftToday(nextDraft);
-    persistDraft(nextDraft);
+  function handleMonthChange(nextMonth) {
+    const nextStart = monthStartKey(nextMonth);
+    const nextEnd = endOfMonthKey(nextMonth);
+    const nextMax = minDateKey(nextEnd, today);
+    const preferredDate = nextMonth === currentMonth ? today : nextStart;
+
+    setMonth(nextMonth);
+    setSelectedDate(clampDateKey(preferredDate, nextStart, nextMax));
     setMessage("");
   }
 
-  async function saveToday(draft = draftToday, options = {}) {
+  function selectCorrectionDate(dateKey) {
+    if (dateKey > today) {
+      setMessage("Nao e possivel corrigir data futura.");
+      return;
+    }
+
+    setMonth(dateKey.slice(0, 7));
+    setSelectedDate(dateKey);
+    setMessage("");
+  }
+
+  function handleSelectedDateChange(value) {
+    if (!value) return;
+
+    setSelectedDate(clampDateKey(value, monthStart, maxSelectableDate));
+    setMessage("");
+  }
+
+  function updateDraft(field, value) {
+    const nextDraft = normalizeDraft({ ...draftRecord, [field]: value });
+    setDraftRecord(nextDraft);
+    persistDraft(selectedDate, nextDraft);
+    setMessage("");
+  }
+
+  async function saveDay(draft = draftRecord, options = {}) {
     const nextDraft = normalizeDraft(draft);
     const state = calculateRecordState(nextDraft);
 
@@ -149,7 +174,7 @@ export default function PontoClient({ userId, initialProfile }) {
     setMessage("");
 
     const { data, error } = await supabase.rpc("save_day_record", {
-      p_work_date: today,
+      p_work_date: selectedDate,
       p_entrada: nextDraft.entrada || null,
       p_saida_almoco: nextDraft.saida_almoco || null,
       p_retorno_almoco: nextDraft.retorno_almoco || null,
@@ -164,14 +189,14 @@ export default function PontoClient({ userId, initialProfile }) {
       return;
     }
 
-    clearStoredDraft();
-    setDraftToday(draftFromRecord(data));
+    clearStoredDraft(selectedDate);
+    setDraftRecord(draftFromRecord(data));
 
     if (data?.work_date?.slice(0, 7) === month) {
       setRecords((current) => replaceRecord(current, data));
     }
 
-    setMessage("Dia concluido e salvo no mes.");
+    setMessage(`Dia ${formatDateLabel(selectedDate)} salvo no mes.`);
   }
 
   async function signOut() {
@@ -209,7 +234,12 @@ export default function PontoClient({ userId, initialProfile }) {
       <section className="toolbar">
         <label>
           Mes
-          <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+          <input
+            type="month"
+            value={month}
+            max={currentMonth}
+            onChange={(event) => handleMonthChange(event.target.value)}
+          />
         </label>
         <div className="metric">
           <span>Total do mes</span>
@@ -220,10 +250,32 @@ export default function PontoClient({ userId, initialProfile }) {
       <section className="panel punch-panel">
         <div className="panel-heading">
           <div>
-            <h2>Registrar hoje</h2>
-            <p className="muted">{new Date().toLocaleDateString("pt-BR")}</p>
+            <h2>Registrar ou corrigir dia</h2>
+            <p className="muted">{selectedDay?.label || formatDateLabel(selectedDate)}</p>
           </div>
           <Clock size={24} />
+        </div>
+        <div className="date-controls">
+          <label>
+            Dia
+            <input
+              type="date"
+              value={selectedDate}
+              min={monthStart}
+              max={maxSelectableDate}
+              disabled={busy}
+              onChange={(event) => handleSelectedDateChange(event.target.value)}
+            />
+          </label>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => selectCorrectionDate(today)}
+            disabled={busy || selectedDate === today}
+          >
+            <Calendar size={18} />
+            Hoje
+          </button>
         </div>
         <div className="punch-form">
           {TIME_FIELDS.map((field) => (
@@ -231,12 +283,12 @@ export default function PontoClient({ userId, initialProfile }) {
               <span>{FIELD_LABELS[field]}</span>
               <input
                 type="time"
-                value={draftToday[field] || ""}
+                value={draftRecord[field] || ""}
                 disabled={busy}
                 onChange={(event) => updateDraft(field, event.target.value)}
                 onBlur={(event) => {
                   if (field === "saida") {
-                    saveToday({ ...draftToday, [field]: event.currentTarget.value }, { silent: true });
+                    saveDay({ ...draftRecord, [field]: event.currentTarget.value }, { silent: true });
                   }
                 }}
                 onKeyDown={(event) => {
@@ -248,7 +300,7 @@ export default function PontoClient({ userId, initialProfile }) {
           <label className="punch-field punch-note">
             <span>Observacao</span>
             <input
-              value={draftToday.observacao || ""}
+              value={draftRecord.observacao || ""}
               disabled={busy}
               onChange={(event) => updateDraft("observacao", event.target.value)}
             />
@@ -257,9 +309,9 @@ export default function PontoClient({ userId, initialProfile }) {
         <div className="day-actions">
           <div className="metric">
             <span>Total do dia</span>
-            <strong>{formatRecordDuration(draftToday)}</strong>
+            <strong>{formatRecordDuration(draftRecord)}</strong>
           </div>
-          <button className="primary" type="button" onClick={() => saveToday()} disabled={!canSaveToday}>
+          <button className="primary" type="button" onClick={() => saveDay()} disabled={!canSaveDay}>
             <Save size={18} />
             {busy ? "Salvando..." : "Concluir dia"}
           </button>
@@ -284,13 +336,20 @@ export default function PontoClient({ userId, initialProfile }) {
                 <th>Saida</th>
                 <th>Total</th>
                 <th>Observacao</th>
+                <th>Acao</th>
               </tr>
             </thead>
             <tbody>
               {monthDays.map((day) => {
                 const record = recordsByDate[day.key] || {};
+                const isFutureDay = day.key > today;
+                const isSelected = day.key === selectedDate;
+
                 return (
-                  <tr key={day.key} className={day.isWeekend ? "weekend" : ""}>
+                  <tr
+                    key={day.key}
+                    className={`${day.isWeekend ? "weekend" : ""} ${isSelected ? "selected-day" : ""}`}
+                  >
                     <td>{day.weekday}</td>
                     <td>{day.label}</td>
                     {TIME_FIELDS.map((field) => (
@@ -298,6 +357,17 @@ export default function PontoClient({ userId, initialProfile }) {
                     ))}
                     <td className="strong">{formatRecordDuration(record)}</td>
                     <td>{record.observacao || ""}</td>
+                    <td className="correction-cell">
+                      <button
+                        className={isSelected ? "primary" : "secondary"}
+                        type="button"
+                        onClick={() => selectCorrectionDate(day.key)}
+                        disabled={busy || isFutureDay}
+                      >
+                        <Pencil size={16} />
+                        Corrigir
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -338,6 +408,22 @@ function hasDraftValue(draft) {
 function replaceRecord(current, data) {
   const withoutRecord = current.filter((record) => record.work_date !== data.work_date);
   return [...withoutRecord, data].sort((a, b) => a.work_date.localeCompare(b.work_date));
+}
+
+function minDateKey(firstDate, secondDate) {
+  return firstDate <= secondDate ? firstDate : secondDate;
+}
+
+function clampDateKey(dateKey, minDate, maxDate) {
+  if (maxDate < minDate) return minDate;
+  if (dateKey < minDate) return minDate;
+  if (dateKey > maxDate) return maxDate;
+  return dateKey;
+}
+
+function formatDateLabel(dateKey) {
+  const [year, month, day] = dateKey.split("-");
+  return `${day}/${month}/${year}`;
 }
 
 function PrintSheet({ month, profile, days, recordsByDate, monthTotal }) {
