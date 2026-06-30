@@ -50,6 +50,8 @@ export default function AdminClient({ adminProfile }) {
   const [passwordEdits, setPasswordEdits] = useState({});
   const [passwordLoading, setPasswordLoading] = useState("");
   const [deletingProfileId, setDeletingProfileId] = useState("");
+  const [deleteModalProfile, setDeleteModalProfile] = useState(null);
+  const [deletePrintSheet, setDeletePrintSheet] = useState(null);
   const [accessLogs, setAccessLogs] = useState([]);
   const [accessMonth, setAccessMonth] = useState(currentMonthKey());
   const [accessUserId, setAccessUserId] = useState("");
@@ -233,16 +235,18 @@ export default function AdminClient({ adminProfile }) {
     await updateProfile(profile.id, { [field]: normalizedValue });
   }
 
-  async function deleteProfile(profile) {
+  function openDeleteProfile(profile) {
     if (profile.id === adminProfile.id) {
       setMessage("Voce nao pode apagar seu proprio usuario.");
       return;
     }
 
-    const ok = window.confirm(
-      `Apagar ${profile.full_name || profile.email}? Esta acao remove usuario, pontos e historicos vinculados.`
-    );
-    if (!ok) return;
+    setMessage("");
+    setDeleteModalProfile(profile);
+  }
+
+  async function performDeleteProfile(profile, successMessage = "Usuario apagado.") {
+    if (!profile) return;
 
     setDeletingProfileId(profile.id);
     setMessage("");
@@ -256,8 +260,94 @@ export default function AdminClient({ adminProfile }) {
     }
 
     if (selectedUserId === profile.id) setSelectedUserId("");
-    setMessage("Usuario apagado.");
+    setDeleteModalProfile(null);
+    setDeletePrintSheet(null);
+    setPrintTarget(null);
+    setMessage(successMessage);
     await loadProfiles();
+  }
+
+  async function loadPrintableSheet(profile) {
+    const targetMonth = month;
+    const [{ data: recordData, error: recordError }, { data: closingData, error: closingError }] =
+      await Promise.all([
+        supabase
+          .from("time_records")
+          .select("*")
+          .eq("user_id", profile.id)
+          .gte("work_date", monthStartKey(targetMonth))
+          .lte("work_date", endOfMonthKey(targetMonth))
+          .order("work_date", { ascending: true }),
+        supabase
+          .from("month_closings")
+          .select("*")
+          .eq("user_id", profile.id)
+          .eq("month", monthStartKey(targetMonth))
+          .maybeSingle(),
+      ]);
+
+    if (recordError || closingError) {
+      throw new Error(recordError?.message || closingError?.message || "Nao foi possivel carregar a folha para imprimir.");
+    }
+
+    const activeRecords = recordData || [];
+    const printableRecords = activeRecords.length > 0 ? activeRecords : closingData?.snapshot || [];
+
+    return {
+      month: targetMonth,
+      profile,
+      days: daysInMonth(targetMonth),
+      recordsByDate: Object.fromEntries(printableRecords.map((record) => [record.work_date, record])),
+      monthTotal: closingData && activeRecords.length === 0
+        ? closingData.total_minutes || totalMinutes(printableRecords)
+        : totalMinutes(printableRecords),
+      closedAt: closingData?.closed_at,
+    };
+  }
+
+  function waitForPrintDialog() {
+    return new Promise((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        window.removeEventListener("afterprint", finish);
+        resolve();
+      };
+
+      window.addEventListener("afterprint", finish, { once: true });
+      window.setTimeout(() => {
+        window.print();
+        window.setTimeout(finish, 500);
+      }, 0);
+    });
+  }
+
+  async function printAndDeleteProfile(profile) {
+    if (!profile || deletingProfileId) return;
+
+    setDeletingProfileId(profile.id);
+    setMessage("Preparando folha para impressao...");
+
+    try {
+      const printableSheet = await loadPrintableSheet(profile);
+      setDeletePrintSheet(printableSheet);
+      setPrintTarget("delete-sheet");
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await waitForPrintDialog();
+      setPrintTarget(null);
+      setDeletePrintSheet(null);
+      await performDeleteProfile(profile, "Folha enviada para impressao e usuario apagado.");
+    } catch (error) {
+      setDeletingProfileId("");
+      setPrintTarget(null);
+      setDeletePrintSheet(null);
+      setMessage(error.message || "Nao foi possivel imprimir e apagar o usuario.");
+    }
+  }
+
+  async function deleteProfile(profile) {
+    await performDeleteProfile(profile);
   }
 
   async function changePassword(profile) {
@@ -603,7 +693,7 @@ export default function AdminClient({ adminProfile }) {
                       <input type="checkbox" checked={profile.active} onChange={(event) => updateProfile(profile.id, { active: event.target.checked })} />
                       Ativo
                     </label>
-                    <button className="danger-button" type="button" onClick={() => deleteProfile(profile)} disabled={deletingProfileId === profile.id || profile.id === adminProfile.id}>
+                    <button className="danger-button" type="button" onClick={() => openDeleteProfile(profile)} disabled={deletingProfileId === profile.id || profile.id === adminProfile.id}>
                       <Trash2 size={16} />
                       {deletingProfileId === profile.id ? "Apagando..." : "Apagar"}
                     </button>
@@ -765,8 +855,41 @@ export default function AdminClient({ adminProfile }) {
         </section>
       ) : null}
 
+      {deleteModalProfile ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-user-title">
+          <section className="modal-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Acao permanente</p>
+                <h2 id="delete-user-title">Apagar usuario</h2>
+              </div>
+              <Trash2 size={22} />
+            </div>
+            <p className="modal-copy">
+              Voce esta apagando {deleteModalProfile.full_name || deleteModalProfile.email}. Para preservar historico, prefira desativar o usuario no campo Ativo.
+            </p>
+            <p className="modal-copy">
+              Se continuar, os dados vinculados ao usuario podem ser removidos. Deseja imprimir a folha de {formatMonthLabel(month)} antes de apagar?
+            </p>
+            <div className="modal-actions">
+              <button className="secondary" type="button" onClick={() => setDeleteModalProfile(null)} disabled={Boolean(deletingProfileId)}>
+                Cancelar
+              </button>
+              <button className="secondary" type="button" onClick={() => printAndDeleteProfile(deleteModalProfile)} disabled={Boolean(deletingProfileId)}>
+                <Printer size={16} />
+                Imprimir mes e apagar
+              </button>
+              <button className="danger-button" type="button" onClick={() => deleteProfile(deleteModalProfile)} disabled={Boolean(deletingProfileId)}>
+                <Trash2 size={16} />
+                {deletingProfileId ? "Apagando..." : "Apagar sem imprimir"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {printTarget === "sheet" ? <PrintSheet month={month} profile={selectedProfile} days={monthDays} recordsByDate={sheetRecordsByDate} monthTotal={monthTotal} closedAt={closing?.closed_at} /> : null}
       {printTarget === "access" ? <PrintAccessReport month={accessMonth} logs={accessLogs} /> : null}
+      {printTarget === "delete-sheet" && deletePrintSheet ? <PrintSheet {...deletePrintSheet} /> : null}
     </main>
   );
 }
