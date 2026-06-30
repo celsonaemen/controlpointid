@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -639,6 +639,23 @@ export default function AdminClient({ adminProfile }) {
               </div>
             </div>
           </div>
+
+
+          {employees.length > 0 ? (
+            <div className="sheet-people-list" aria-label="Funcionarios da folha">
+              {employees.map((employee) => (
+                <button
+                  className={`sheet-person ${employee.id === selectedUserId ? "active" : ""}`}
+                  type="button"
+                  key={employee.id}
+                  onClick={() => selectProfile(employee)}
+                >
+                  <strong>{employee.full_name || employee.email}</strong>
+                  <span>{employee.job_title || employee.email}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           {!selectedProfile ? <div className="notice">Cadastre ou ative um funcionario para lancar a folha de ponto.</div> : null}
           {monthLoading ? <div className="notice">Carregando folha do funcionario selecionado...</div> : null}

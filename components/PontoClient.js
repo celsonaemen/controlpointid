@@ -47,6 +47,11 @@ export default function PontoClient({ userId, initialProfile }) {
   const monthEnd = endOfMonthKey(month);
   const maxSelectableDate = minDateKey(monthEnd, today);
   const selectedDay = monthDays.find((day) => day.key === selectedDate);
+  const selectedSavedRecord = recordsByDate[selectedDate];
+  const isCorrection = Boolean(selectedSavedRecord) || selectedDate < today;
+  const todayRecord = recordsByDate[today] || {};
+  const nextPunchKind = month === currentMonth ? getNextPunchKind(todayRecord) : null;
+  const canClockPunch = !busy && (month !== currentMonth || Boolean(nextPunchKind));
   const draftState = calculateRecordState(draftRecord);
   const canSaveDay = draftState.valid && draftState.complete && !busy;
   const monthTotal = totalMinutes(records);
@@ -154,6 +159,57 @@ export default function PontoClient({ userId, initialProfile }) {
     setMessage("");
   }
 
+  async function clockPunch() {
+    setBusy(true);
+    setMessage("");
+
+    const { data: liveRecord, error: liveRecordError } = await supabase
+      .from("time_records")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("work_date", today)
+      .maybeSingle();
+
+    if (liveRecordError) {
+      setBusy(false);
+      setMessage(liveRecordError.message);
+      return;
+    }
+
+    if (selectedDate === today && hasDraftValue(draftRecord) && !draftsEqual(draftRecord, liveRecord)) {
+      setBusy(false);
+      setMessage("Voce tem horarios digitados em hoje. Salve ou atualize antes de bater ponto.");
+      return;
+    }
+
+    const punchKind = getNextPunchKind(liveRecord || {});
+
+    if (!punchKind) {
+      setBusy(false);
+      setMessage("Todos os pontos de hoje ja foram registrados.");
+      return;
+    }
+
+    const { data, error } = await supabase.rpc("clock_time", { p_kind: punchKind });
+    setBusy(false);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    const recordMonth = data.work_date.slice(0, 7);
+    if (recordMonth !== month) {
+      setMonth(recordMonth);
+    }
+
+    setSelectedDate(data.work_date);
+    clearStoredDraft(data.work_date);
+    setDraftRecord(draftFromRecord(data));
+    setRecords((current) => replaceRecord(current, data));
+    setMessage(`${FIELD_LABELS[punchKind]} registrada as ${cleanTime(data[punchKind])}.`);
+  }
+
   async function saveDay(draft = draftRecord, options = {}) {
     const nextDraft = normalizeDraft(draft);
     const state = calculateRecordState(nextDraft);
@@ -173,22 +229,28 @@ export default function PontoClient({ userId, initialProfile }) {
     setBusy(true);
     setMessage("");
 
-    const { data, error } = await supabase.rpc("save_day_record", {
-      p_work_date: selectedDate,
-      p_entrada: nextDraft.entrada || null,
-      p_saida_almoco: nextDraft.saida_almoco || null,
-      p_retorno_almoco: nextDraft.retorno_almoco || null,
-      p_saida: nextDraft.saida || null,
-      p_observacao: nextDraft.observacao || "",
+    const response = await fetch("/api/ponto/day", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        work_date: selectedDate,
+        entrada: nextDraft.entrada,
+        saida_almoco: nextDraft.saida_almoco,
+        retorno_almoco: nextDraft.retorno_almoco,
+        saida: nextDraft.saida,
+        observacao: nextDraft.observacao,
+      }),
     });
+    const result = await response.json();
 
     setBusy(false);
 
-    if (error) {
-      setMessage(error.message);
+    if (!response.ok) {
+      setMessage(result.error || "Nao foi possivel salvar o ponto.");
       return;
     }
 
+    const data = result.record;
     clearStoredDraft(selectedDate);
     setDraftRecord(draftFromRecord(data));
 
@@ -196,7 +258,7 @@ export default function PontoClient({ userId, initialProfile }) {
       setRecords((current) => replaceRecord(current, data));
     }
 
-    setMessage(`Dia ${formatDateLabel(selectedDate)} salvo no mes.`);
+    setMessage(`${isCorrection ? "Correcao" : "Dia"} ${formatDateLabel(selectedDate)} salvo no mes.`);
   }
 
   async function signOut() {
@@ -250,10 +312,20 @@ export default function PontoClient({ userId, initialProfile }) {
       <section className="panel punch-panel">
         <div className="panel-heading">
           <div>
-            <h2>Registrar ou corrigir dia</h2>
+            <h2>{isCorrection ? "Corrigir dia" : "Registrar dia"}</h2>
             <p className="muted">{selectedDay?.label || formatDateLabel(selectedDate)}</p>
           </div>
           <Clock size={24} />
+        </div>
+        <div className="quick-punch">
+          <div>
+            <strong>Ponto de hoje</strong>
+            <span>{nextPunchKind ? `Proximo: ${FIELD_LABELS[nextPunchKind]}` : month === currentMonth ? "Todos os pontos de hoje foram registrados." : "Registra no dia de hoje."}</span>
+          </div>
+          <button className="primary" type="button" onClick={clockPunch} disabled={!canClockPunch}>
+            <Clock size={18} />
+            Bater ponto
+          </button>
         </div>
         <div className="date-controls">
           <label>
@@ -313,7 +385,7 @@ export default function PontoClient({ userId, initialProfile }) {
           </div>
           <button className="primary" type="button" onClick={() => saveDay()} disabled={!canSaveDay}>
             <Save size={18} />
-            {busy ? "Salvando..." : "Concluir dia"}
+            {busy ? "Salvando..." : isCorrection ? "Salvar correcao" : "Concluir dia"}
           </button>
         </div>
         {message ? <div className="notice">{message}</div> : null}
@@ -384,6 +456,20 @@ export default function PontoClient({ userId, initialProfile }) {
         monthTotal={monthTotal}
       />
     </main>
+  );
+}
+
+function getNextPunchKind(record) {
+  return TIME_FIELDS.find((field) => !cleanTime(record?.[field])) || null;
+}
+
+function draftsEqual(first, second) {
+  const firstDraft = normalizeDraft(first);
+  const secondDraft = normalizeDraft(second || emptyDraft);
+
+  return (
+    TIME_FIELDS.every((field) => firstDraft[field] === secondDraft[field]) &&
+    firstDraft.observacao === secondDraft.observacao
   );
 }
 

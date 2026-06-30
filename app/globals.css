@@ -322,6 +322,31 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.quick-punch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--header-bg);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.quick-punch div {
+  display: grid;
+  gap: 3px;
+}
+
+.quick-punch strong {
+  font-size: 15px;
+}
+
+.quick-punch span {
+  color: var(--muted);
+  font-size: 13px;
+}
 .punch-form {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -428,6 +453,38 @@ h2 {
   gap: 16px;
 }
 
+.sheet-people-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.sheet-person {
+  min-width: 178px;
+  min-height: 52px;
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  border-color: var(--line);
+  background: var(--field);
+  color: var(--ink);
+  text-align: left;
+}
+
+.sheet-person.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+
+.sheet-person span {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .people-list {
   display: grid;
   gap: 8px;
@@ -592,6 +649,7 @@ td:last-child input {
 
   .app-header,
   .toolbar,
+  .quick-punch,
   .panel-heading {
     align-items: stretch;
     flex-direction: column;
@@ -609,6 +667,10 @@ td:last-child input {
   .punch-grid,
   .punch-form {
     grid-template-columns: 1fr;
+  }
+
+  .quick-punch button {
+    width: 100%;
   }
 
   .person-row {
