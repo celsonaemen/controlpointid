@@ -1,4 +1,5 @@
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import AccessTracker from "@/components/AccessTracker";
 import ThemeToggle from "@/components/ThemeToggle";
 import "./globals.css";
 
@@ -11,6 +12,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="pt-BR">
       <body>
+        <AccessTracker />
         <ThemeToggle />
         {children}
         <SpeedInsights />

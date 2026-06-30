@@ -1,8 +1,28 @@
 import { NextResponse } from "next/server";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 
+const ACCESS_LOG_COOKIE = "cp_access_log_id";
+
 function isEmail(value) {
   return value.includes("@");
+}
+
+function getClientIp(request) {
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    ""
+  );
+}
+
+function setAccessLogCookie(response, logId) {
+  response.cookies.set(ACCESS_LOG_COOKIE, logId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+    path: "/",
+    maxAge: 60 * 60 * 24,
+  });
 }
 
 export async function POST(request) {
@@ -17,10 +37,10 @@ export async function POST(request) {
     );
   }
 
+  const service = createAdminClient();
   let email = identifier.toLowerCase();
 
   if (!isEmail(identifier)) {
-    const service = createAdminClient();
     const { data: profiles, error } = await service
       .from("profiles")
       .select("email")
@@ -49,17 +69,36 @@ export async function POST(request) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
 
-  if (error) {
+  if (error || !data.user) {
     return NextResponse.json(
       { error: "Nome/email ou senha incorretos." },
       { status: 401 }
     );
   }
 
-  return NextResponse.json({ ok: true });
+  const now = new Date().toISOString();
+  const { data: log } = await service
+    .from("access_logs")
+    .insert({
+      user_id: data.user.id,
+      login_at: now,
+      last_seen_at: now,
+      user_agent: request.headers.get("user-agent") || "",
+      ip_address: getClientIp(request),
+    })
+    .select("id")
+    .single();
+
+  const response = NextResponse.json({ ok: true });
+
+  if (log?.id) {
+    setAccessLogCookie(response, log.id);
+  }
+
+  return response;
 }
