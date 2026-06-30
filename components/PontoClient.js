@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, Clock, LogOut, Pencil, Printer, RefreshCcw, Save } from "lucide-react";
+import { Calendar, Clock, HelpCircle, LogOut, Pencil, Printer, RefreshCcw, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   FIELD_LABELS,
@@ -38,6 +38,7 @@ export default function PontoClient({ userId, initialProfile }) {
   const [records, setRecords] = useState([]);
   const [draftRecord, setDraftRecord] = useState(emptyDraft);
   const [approval, setApproval] = useState(null);
+  const [activeTab, setActiveTab] = useState("ponto");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -343,7 +344,28 @@ export default function PontoClient({ userId, initialProfile }) {
       </section>
 
 
-      <section className="panel summary-panel">
+      <nav className="employee-tabs" aria-label="Areas do funcionario">
+        <button
+          className={activeTab === "ponto" ? "active" : ""}
+          type="button"
+          onClick={() => setActiveTab("ponto")}
+        >
+          <Clock size={18} />
+          Ponto
+        </button>
+        <button
+          className={activeTab === "ajuda" ? "active" : ""}
+          type="button"
+          onClick={() => setActiveTab("ajuda")}
+        >
+          <HelpCircle size={18} />
+          Ajuda
+        </button>
+      </nav>
+
+      <HelpPanel hidden={activeTab !== "ajuda"} />
+
+      <section className="panel summary-panel" hidden={activeTab !== "ponto"}>
         <div className="panel-heading">
           <div>
             <h2>Resumo do mes</h2>
@@ -370,7 +392,7 @@ export default function PontoClient({ userId, initialProfile }) {
           </div>
         ) : <div className="notice success">Nenhuma pendencia encontrada na jornada esperada.</div>}
       </section>
-      <section className="panel punch-panel">
+      <section className="panel punch-panel" hidden={activeTab !== "ponto"}>
         <div className="panel-heading">
           <div>
             <h2>{isCorrection ? "Corrigir dia" : "Registrar dia"}</h2>
@@ -452,7 +474,7 @@ export default function PontoClient({ userId, initialProfile }) {
         {message ? <div className="notice">{message}</div> : null}
       </section>
 
-      <section className="panel">
+      <section className="panel" hidden={activeTab !== "ponto"}>
         <div className="panel-heading">
           <h2>Registros do mes</h2>
           <span className="muted">{formatMonthLabel(month)}</span>
@@ -520,6 +542,50 @@ export default function PontoClient({ userId, initialProfile }) {
   );
 }
 
+function HelpPanel({ hidden }) {
+  return (
+    <section className="panel help-panel" hidden={hidden}>
+      <div className="panel-heading">
+        <div>
+          <h2>Como usar o ponto</h2>
+          <p className="muted">Procedimento diario para registrar, corrigir e conferir a folha.</p>
+        </div>
+        <HelpCircle size={24} />
+      </div>
+
+      <div className="help-grid">
+        <article className="help-card">
+          <strong>1. Bater ponto no dia</strong>
+          <p>Clique em Bater ponto nos horarios de entrada, saida para almoco, retorno do almoco e saida final.</p>
+        </article>
+        <article className="help-card">
+          <strong>2. Preencher manualmente</strong>
+          <p>Escolha o dia, digite os horarios nos campos e clique em Concluir dia. Ao preencher a saida final, o sistema tambem tenta salvar automaticamente.</p>
+        </article>
+        <article className="help-card">
+          <strong>3. Corrigir um dia</strong>
+          <p>Na tabela Registros do mes, clique em Corrigir no dia desejado, ajuste os horarios e salve a correcao.</p>
+        </article>
+        <article className="help-card">
+          <strong>4. Conferir pendencias</strong>
+          <p>Veja o Resumo do mes para identificar dias incompletos, faltas, atrasos, horas extras e saldo do banco de horas.</p>
+        </article>
+        <article className="help-card">
+          <strong>5. Confirmar a folha</strong>
+          <p>No fim do mes, confira todos os registros e clique em Confirmar folha do mes para registrar seu aceite.</p>
+        </article>
+        <article className="help-card">
+          <strong>6. Imprimir</strong>
+          <p>Use o botao Imprimir no topo para gerar a folha mensal com os horarios salvos.</p>
+        </article>
+      </div>
+
+      <div className="notice">
+        Se algum horario estiver errado, corrija antes de confirmar a folha do mes.
+      </div>
+    </section>
+  );
+}
 function getNextPunchKind(record) {
   return TIME_FIELDS.find((field) => !cleanTime(record?.[field])) || null;
 }

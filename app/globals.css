@@ -429,20 +429,23 @@ h2 {
   color: var(--success);
 }
 
-.admin-tabs {
+.admin-tabs,
+.employee-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 16px 0;
 }
 
-.admin-tabs button {
+.admin-tabs button,
+.employee-tabs button {
   border-color: var(--line);
   background: var(--field);
   color: var(--ink);
 }
 
-.admin-tabs button.active {
+.admin-tabs button.active,
+.employee-tabs button.active {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-dark);
@@ -541,6 +544,33 @@ h2 {
   padding: 7px 9px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.help-card {
+  min-height: 128px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--header-bg);
+  padding: 12px;
+}
+
+.help-card strong {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 14px;
+}
+
+.help-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .workday-toggle {
@@ -786,6 +816,7 @@ td:last-child input {
 
   .admin-grid,
   .summary-grid,
+  .help-grid,
   .punch-grid,
   .punch-form {
     grid-template-columns: 1fr;
