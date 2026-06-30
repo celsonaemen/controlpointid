@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   FIELD_LABELS,
   TIME_FIELDS,
+  analyzeMonth,
   calculateRecordState,
   cleanTime,
   currentMonthKey,
@@ -14,6 +15,7 @@ import {
   formatDuration,
   formatMonthLabel,
   formatRecordDuration,
+  formatSignedDuration,
   monthStartKey,
   todayKey,
   totalMinutes,
@@ -35,6 +37,7 @@ export default function PontoClient({ userId, initialProfile }) {
   const [selectedDate, setSelectedDate] = useState(today);
   const [records, setRecords] = useState([]);
   const [draftRecord, setDraftRecord] = useState(emptyDraft);
+  const [approval, setApproval] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -55,6 +58,7 @@ export default function PontoClient({ userId, initialProfile }) {
   const draftState = calculateRecordState(draftRecord);
   const canSaveDay = draftState.valid && draftState.complete && !busy;
   const monthTotal = totalMinutes(records);
+  const monthSummary = analyzeMonth(monthDays, recordsByDate, initialProfile, today);
 
   useEffect(() => {
     loadRecords();
@@ -65,20 +69,29 @@ export default function PontoClient({ userId, initialProfile }) {
   }, [selectedDate, records]);
 
   async function loadRecords() {
-    const { data, error } = await supabase
-      .from("time_records")
-      .select("*")
-      .eq("user_id", userId)
-      .gte("work_date", monthStartKey(month))
-      .lte("work_date", endOfMonthKey(month))
-      .order("work_date", { ascending: true });
+    const [{ data, error }, { data: approvalData, error: approvalError }] = await Promise.all([
+      supabase
+        .from("time_records")
+        .select("*")
+        .eq("user_id", userId)
+        .gte("work_date", monthStartKey(month))
+        .lte("work_date", endOfMonthKey(month))
+        .order("work_date", { ascending: true }),
+      supabase
+        .from("timesheet_approvals")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("month", monthStartKey(month))
+        .maybeSingle(),
+    ]);
 
-    if (error) {
-      setMessage(error.message);
+    if (error || approvalError) {
+      setMessage(error?.message || approvalError?.message);
       return;
     }
 
     setRecords(data || []);
+    setApproval(approvalData || null);
   }
 
   function syncSelectedDraft(savedRecord) {
@@ -261,6 +274,26 @@ export default function PontoClient({ userId, initialProfile }) {
     setMessage(`${isCorrection ? "Correcao" : "Dia"} ${formatDateLabel(selectedDate)} salvo no mes.`);
   }
 
+  async function approveMonth() {
+    setBusy(true);
+    setMessage("");
+
+    const response = await fetch("/api/ponto/approve-month", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month }),
+    });
+    const result = await response.json();
+    setBusy(false);
+
+    if (!response.ok) {
+      setMessage(result.error || "Nao foi possivel confirmar a folha.");
+      return;
+    }
+
+    setApproval(result.approval || null);
+    setMessage(`Folha de ${formatMonthLabel(month)} confirmada.`);
+  }
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = "/login";
@@ -309,6 +342,34 @@ export default function PontoClient({ userId, initialProfile }) {
         </div>
       </section>
 
+
+      <section className="panel summary-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Resumo do mes</h2>
+            <p className="muted">Pendencias, horas extras e saldo da sua jornada.</p>
+          </div>
+          <button className="primary" type="button" onClick={approveMonth} disabled={busy || records.length === 0}>
+            <Save size={18} />
+            {approval ? "Confirmar novamente" : "Confirmar folha do mes"}
+          </button>
+        </div>
+        <div className="summary-grid">
+          <div className="summary-card"><span>Pendencias</span><strong>{monthSummary.pending}</strong></div>
+          <div className="summary-card"><span>Faltas</span><strong>{monthSummary.absences}</strong></div>
+          <div className="summary-card"><span>Incompletos</span><strong>{monthSummary.incomplete}</strong></div>
+          <div className="summary-card"><span>Horas extras</span><strong>{formatDuration(monthSummary.overtimeMinutes)}</strong></div>
+          <div className={`summary-card ${monthSummary.balanceMinutes < 0 ? "danger" : ""}`}><span>Banco de horas</span><strong>{formatSignedDuration(monthSummary.balanceMinutes)}</strong></div>
+        </div>
+        {approval ? <div className="notice success">Folha confirmada em {new Date(approval.approved_at).toLocaleString("pt-BR")}.</div> : null}
+        {monthSummary.issues.length > 0 ? (
+          <div className="issue-list">
+            {monthSummary.issues.slice(0, 6).map((issue) => (
+              <span key={`${issue.type}-${issue.date}`}>{issue.label}: {issue.detail}</span>
+            ))}
+          </div>
+        ) : <div className="notice success">Nenhuma pendencia encontrada na jornada esperada.</div>}
+      </section>
       <section className="panel punch-panel">
         <div className="panel-heading">
           <div>

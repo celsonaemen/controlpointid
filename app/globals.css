@@ -485,6 +485,94 @@ h2 {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+.summary-panel-inline,
+.audit-box {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--header-bg);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.summary-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  padding: 10px;
+}
+
+.summary-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.summary-card strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-card.danger strong {
+  color: var(--danger);
+}
+
+.issue-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.issue-list span {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workday-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.workday-toggle button {
+  min-width: 42px;
+  min-height: 34px;
+  border-color: var(--line);
+  background: var(--field);
+  color: var(--ink);
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.workday-toggle button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+
+.compact-table table {
+  min-width: 760px;
+}
+
+.compact-table td {
+  font-size: 12px;
+}
 .people-list {
   display: grid;
   gap: 8px;
@@ -697,6 +785,7 @@ td:last-child input {
   }
 
   .admin-grid,
+  .summary-grid,
   .punch-grid,
   .punch-form {
     grid-template-columns: 1fr;

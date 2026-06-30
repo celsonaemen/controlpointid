@@ -23,6 +23,19 @@ function cleanEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function cleanTimeValue(value) {
+  const time = String(value || "").trim().slice(0, 5);
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(time) ? time : "";
+}
+
+function normalizeWorkdays(value) {
+  if (!Array.isArray(value)) return null;
+  const days = [...new Set(value.map(Number))]
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    .sort((a, b) => a - b);
+  return days.length > 0 ? days : null;
+}
+
 export async function PATCH(request, { params }) {
   const admin = await getAdminProfile();
 
@@ -51,6 +64,32 @@ export async function PATCH(request, { params }) {
   if ("job_title" in body) updates.job_title = String(body.job_title || "").trim();
   if ("active" in body) updates.active = Boolean(body.active);
   if ("role" in body) updates.role = body.role === "admin" ? "admin" : "employee";
+
+  if ("expected_daily_minutes" in body) {
+    const minutes = Number(body.expected_daily_minutes);
+    if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) {
+      return NextResponse.json({ error: "Jornada diaria invalida." }, { status: 400 });
+    }
+    updates.expected_daily_minutes = Math.round(minutes);
+  }
+
+  if ("expected_start_time" in body) {
+    const startTime = cleanTimeValue(body.expected_start_time);
+    if (!startTime) return NextResponse.json({ error: "Horario de entrada invalido." }, { status: 400 });
+    updates.expected_start_time = startTime;
+  }
+
+  if ("expected_end_time" in body) {
+    const endTime = cleanTimeValue(body.expected_end_time);
+    if (!endTime) return NextResponse.json({ error: "Horario de saida invalido." }, { status: 400 });
+    updates.expected_end_time = endTime;
+  }
+
+  if ("workdays" in body) {
+    const workdays = normalizeWorkdays(body.workdays);
+    if (!workdays) return NextResponse.json({ error: "Dias de trabalho invalidos." }, { status: 400 });
+    updates.workdays = workdays;
+  }
 
   if ("email" in body) {
     const email = cleanEmail(body.email);

@@ -9,6 +9,7 @@ import {
   LogOut,
   Plus,
   Printer,
+  Download,
   RefreshCcw,
   Save,
   Trash2,
@@ -17,6 +18,8 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import {
   TIME_FIELDS,
+  WEEKDAYS,
+  analyzeMonth,
   cleanTime,
   currentMonthKey,
   daysInMonth,
@@ -24,9 +27,16 @@ import {
   formatDuration,
   formatMonthLabel,
   formatRecordDuration,
+  formatSignedDuration,
   monthStartKey,
+  profileExpectedDailyMinutes,
+  profileExpectedEndTime,
+  profileExpectedStartTime,
+  profileWorkdays,
   totalMinutes,
 } from "@/lib/date";
+
+const WORKDAY_OPTIONS = [1, 2, 3, 4, 5, 6, 0];
 
 const emptyEmployee = {
   full_name: "",
@@ -46,6 +56,9 @@ export default function AdminClient({ adminProfile }) {
   const [records, setRecords] = useState([]);
   const [draftRecords, setDraftRecords] = useState([]);
   const [closing, setClosing] = useState(null);
+  const [approval, setApproval] = useState(null);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
   const [passwordEdits, setPasswordEdits] = useState({});
   const [passwordLoading, setPasswordLoading] = useState("");
@@ -80,6 +93,7 @@ export default function AdminClient({ adminProfile }) {
       ? closing?.total_minutes || totalMinutes(draftRecords)
       : totalMinutes(draftRecords)
     : 0;
+  const monthSummary = selectedProfile ? analyzeMonth(monthDays, sheetRecordsByDate, selectedProfile) : null;
 
   useEffect(() => {
     loadProfiles();
@@ -95,6 +109,8 @@ export default function AdminClient({ adminProfile }) {
     setRecords([]);
     setDraftRecords([]);
     setClosing(null);
+    setApproval(null);
+    setAuditLogs([]);
     setMonthLoading(false);
   }, [selectedUserId, month]);
 
@@ -139,37 +155,67 @@ export default function AdminClient({ adminProfile }) {
       return;
     }
 
-    const [{ data: recordData, error: recordError }, { data: closingData, error: closingError }] =
-      await Promise.all([
-        supabase
-          .from("time_records")
-          .select("*")
-          .eq("user_id", userId)
-          .gte("work_date", monthStartKey(targetMonth))
-          .lte("work_date", endOfMonthKey(targetMonth))
-          .order("work_date", { ascending: true }),
-        supabase
-          .from("month_closings")
-          .select("*")
-          .eq("user_id", userId)
-          .eq("month", monthStartKey(targetMonth))
-          .maybeSingle(),
-      ]);
+    const [
+      { data: recordData, error: recordError },
+      { data: closingData, error: closingError },
+      { data: approvalData, error: approvalError },
+    ] = await Promise.all([
+      supabase
+        .from("time_records")
+        .select("*")
+        .eq("user_id", userId)
+        .gte("work_date", monthStartKey(targetMonth))
+        .lte("work_date", endOfMonthKey(targetMonth))
+        .order("work_date", { ascending: true }),
+      supabase
+        .from("month_closings")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("month", monthStartKey(targetMonth))
+        .maybeSingle(),
+      supabase
+        .from("timesheet_approvals")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("month", monthStartKey(targetMonth))
+        .maybeSingle(),
+    ]);
 
     if (requestId !== monthRequestRef.current) return;
     setMonthLoading(false);
 
-    if (recordError || closingError) {
-      setMessage(recordError?.message || closingError?.message || "Nao foi possivel carregar a folha.");
+    if (recordError || closingError || approvalError) {
+      setMessage(recordError?.message || closingError?.message || approvalError?.message || "Nao foi possivel carregar a folha.");
       return;
     }
 
     const loadedRecords = recordData || [];
     setRecords(loadedRecords);
     setClosing(closingData || null);
+    setApproval(approvalData || null);
     setDraftRecords(loadedRecords.length > 0 ? loadedRecords : closingData?.snapshot || []);
+    loadAuditLogs(userId, targetMonth);
   }
 
+  async function loadAuditLogs(userId = selectedUserId, targetMonth = month) {
+    if (!userId) {
+      setAuditLogs([]);
+      return;
+    }
+
+    setAuditLoading(true);
+    const params = new URLSearchParams({ month: targetMonth, user_id: userId });
+    const response = await fetch(`/api/admin/audit-logs?${params.toString()}`);
+    const result = await response.json();
+    setAuditLoading(false);
+
+    if (!response.ok) {
+      setMessage(result.error || "Nao foi possivel carregar a auditoria.");
+      return;
+    }
+
+    setAuditLogs(result.logs || []);
+  }
   async function loadAccessLogs() {
     setAccessLoading(true);
     setMessage("");
@@ -449,11 +495,82 @@ export default function AdminClient({ adminProfile }) {
     return [...withoutRecord, data].sort((a, b) => a.work_date.localeCompare(b.work_date));
   }
 
+  async function updateExpectedHours(profile, value) {
+    const hours = Number(value);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 24) {
+      setMessage("Jornada diaria invalida.");
+      return;
+    }
+    await updateProfile(profile.id, { expected_daily_minutes: Math.round(hours * 60) });
+  }
+
+  async function toggleWorkday(profile, day) {
+    const current = profileWorkdays(profile);
+    const next = current.includes(day)
+      ? current.filter((item) => item !== day)
+      : [...current, day].sort((a, b) => a - b);
+
+    if (next.length === 0) {
+      setMessage("A escala precisa ter pelo menos um dia de trabalho.");
+      return;
+    }
+
+    await updateProfile(profile.id, { workdays: next });
+  }
+
+  function exportSheetCsv() {
+    if (!selectedProfile) return;
+
+    const rows = [
+      ["Funcionario", selectedProfile.full_name || selectedProfile.email],
+      ["Email", selectedProfile.email || ""],
+      ["Cargo", selectedProfile.job_title || ""],
+      ["Mes", formatMonthLabel(month)],
+      ["Total", formatDuration(monthTotal)],
+      ["Banco de horas", monthSummary ? formatSignedDuration(monthSummary.balanceMinutes) : "00:00"],
+      [],
+      ["Dia", "Data", "Entrada", "Saida almoco", "Retorno almoco", "Saida", "Total", "Observacao"],
+      ...monthDays.map((day) => {
+        const record = sheetRecordsByDate[day.key] || {};
+        return [
+          day.weekday,
+          day.label,
+          cleanTime(record.entrada),
+          cleanTime(record.saida_almoco),
+          cleanTime(record.retorno_almoco),
+          cleanTime(record.saida),
+          formatRecordDuration(record),
+          record.observacao || "",
+        ];
+      }),
+    ];
+
+    downloadCsv(`folha-${selectedProfile.full_name || selectedProfile.email}-${month}.csv`, rows);
+  }
+
+  function exportAccessCsv() {
+    const rows = [
+      ["Usuario", "Email", "Perfil", "Data", "Login", "Ultima atividade", "Minutos", "IP"],
+      ...accessLogs.map((log) => [
+        log.profile?.full_name || "Usuario removido",
+        log.profile?.email || "",
+        log.profile?.role === "admin" ? "admin" : "funcionario",
+        formatAccessDate(log.login_at),
+        formatAccessTime(log.login_at),
+        formatAccessTime(log.last_seen_at),
+        `${log.duration_minutes}`,
+        log.ip_address || "",
+      ]),
+    ];
+
+    downloadCsv(`relatorio-acessos-${accessMonth}.csv`, rows);
+  }
   async function closeMonth() {
     if (!selectedProfile || isClosed) return;
-    const ok = window.confirm(
-      "Fechar este mes vai salvar um snapshot e limpar os registros ativos. Confirma?"
-    );
+    const confirmMessage = approval
+      ? "Fechar este mes vai salvar um snapshot e limpar os registros ativos. Confirma?"
+      : "Este funcionario ainda nao confirmou a folha do mes. Deseja fechar mesmo assim?";
+    const ok = window.confirm(confirmMessage);
     if (!ok) return;
 
     setLoading(true);
@@ -575,16 +692,28 @@ export default function AdminClient({ adminProfile }) {
             Atualizar
           </button>
           {activeTab === "sheet" ? (
-            <button className="secondary" type="button" onClick={printSheet} disabled={!selectedProfile}>
-              <Printer size={18} />
-              Imprimir folha
-            </button>
+            <>
+              <button className="secondary" type="button" onClick={printSheet} disabled={!selectedProfile}>
+                <Printer size={18} />
+                Imprimir folha
+              </button>
+              <button className="secondary" type="button" onClick={exportSheetCsv} disabled={!selectedProfile}>
+                <Download size={18} />
+                Exportar CSV
+              </button>
+            </>
           ) : null}
           {activeTab === "access" ? (
-            <button className="secondary" type="button" onClick={printAccessReport}>
-              <Printer size={18} />
-              Imprimir relatorio
-            </button>
+            <>
+              <button className="secondary" type="button" onClick={printAccessReport}>
+                <Printer size={18} />
+                Imprimir relatorio
+              </button>
+              <button className="secondary" type="button" onClick={exportAccessCsv}>
+                <Download size={18} />
+                Exportar CSV
+              </button>
+            </>
           ) : null}
           {activeTab === "sheet" ? (
             <>
@@ -684,6 +813,25 @@ export default function AdminClient({ adminProfile }) {
                         Cargo
                         <input defaultValue={profile.job_title || ""} onBlur={(event) => updateProfileField(profile, "job_title", event.currentTarget.value)} />
                       </label>
+                      <label>
+                        Jornada/dia
+                        <input type="number" min="0" max="24" step="0.25" defaultValue={minutesToHours(profileExpectedDailyMinutes(profile))} onBlur={(event) => updateExpectedHours(profile, event.currentTarget.value)} />
+                      </label>
+                      <label>
+                        Entrada padrao
+                        <input type="time" defaultValue={profileExpectedStartTime(profile)} onBlur={(event) => updateProfile(profile.id, { expected_start_time: event.currentTarget.value })} />
+                      </label>
+                      <label>
+                        Saida padrao
+                        <input type="time" defaultValue={profileExpectedEndTime(profile)} onBlur={(event) => updateProfile(profile.id, { expected_end_time: event.currentTarget.value })} />
+                      </label>
+                    </div>
+                    <div className="workday-toggle" aria-label="Dias de trabalho">
+                      {WORKDAY_OPTIONS.map((day) => (
+                        <button className={profileWorkdays(profile).includes(day) ? "active" : ""} type="button" key={day} onClick={() => toggleWorkday(profile, day)}>
+                          {WEEKDAYS[day]}
+                        </button>
+                      ))}
                     </div>
                     <select value={profile.role} onChange={(event) => updateProfile(profile.id, { role: event.target.value })}>
                       <option value="employee">Funcionario</option>
@@ -756,6 +904,32 @@ export default function AdminClient({ adminProfile }) {
             </div>
           ) : null}
 
+
+          {selectedProfile && monthSummary ? (
+            <div className="summary-panel-inline">
+              <div className="summary-grid">
+                <div className="summary-card"><span>Pendencias</span><strong>{monthSummary.pending}</strong></div>
+                <div className="summary-card"><span>Faltas</span><strong>{monthSummary.absences}</strong></div>
+                <div className="summary-card"><span>Incompletos</span><strong>{monthSummary.incomplete}</strong></div>
+                <div className="summary-card"><span>Invalidos</span><strong>{monthSummary.invalid}</strong></div>
+                <div className="summary-card"><span>Atrasos</span><strong>{monthSummary.late}</strong></div>
+                <div className="summary-card"><span>Horas extras</span><strong>{formatDuration(monthSummary.overtimeMinutes)}</strong></div>
+                <div className={`summary-card ${monthSummary.balanceMinutes < 0 ? "danger" : ""}`}><span>Banco de horas</span><strong>{formatSignedDuration(monthSummary.balanceMinutes)}</strong></div>
+              </div>
+              {approval ? (
+                <div className="notice success">Folha confirmada pelo funcionario em {new Date(approval.approved_at).toLocaleString("pt-BR")}.</div>
+              ) : (
+                <div className="notice">Funcionario ainda nao confirmou a folha deste mes.</div>
+              )}
+              {monthSummary.issues.length > 0 ? (
+                <div className="issue-list">
+                  {monthSummary.issues.slice(0, 8).map((issue) => (
+                    <span key={`${issue.type}-${issue.date}`}>{issue.label}: {issue.detail}</span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="table-wrap">
             <table>
               <thead>
@@ -792,6 +966,46 @@ export default function AdminClient({ adminProfile }) {
               </tbody>
             </table>
           </div>
+
+          {selectedProfile ? (
+            <section className="audit-box">
+              <div className="panel-heading">
+                <div>
+                  <h2>Auditoria de alteracoes</h2>
+                  <p className="muted">Ultimos lancamentos e correcoes da folha selecionada.</p>
+                </div>
+                <button className="secondary" type="button" onClick={() => loadAuditLogs(selectedProfile.id, month)} disabled={auditLoading}>
+                  <RefreshCcw size={16} />
+                  Atualizar auditoria
+                </button>
+              </div>
+              <div className="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Quando</th>
+                      <th>Acao</th>
+                      <th>Dia</th>
+                      <th>Autor</th>
+                      <th>Alteracao</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.length === 0 ? <tr><td colSpan="5">Nenhuma alteracao registrada para este filtro.</td></tr> : null}
+                    {auditLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>{new Date(log.created_at).toLocaleString("pt-BR")}</td>
+                        <td>{formatAuditAction(log.action)}</td>
+                        <td>{auditWorkDate(log)}</td>
+                        <td>{log.actor?.full_name || log.actor?.email || "Sistema"}</td>
+                        <td>{formatAuditChanges(log)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
         </section>
       ) : null}
 
@@ -894,6 +1108,55 @@ export default function AdminClient({ adminProfile }) {
   );
 }
 
+function minutesToHours(minutes) {
+  return (minutes / 60).toFixed(2).replace(/\.00$/, "");
+}
+
+function escapeCsvCell(value) {
+  const raw = String(value ?? "");
+  const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replaceAll('"', '""')}"`;
+}
+
+function downloadCsv(filename, rows) {
+  const csv = rows.map((row) => row.map(escapeCsvCell).join(";")).join("\n");
+  const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename.replace(/[\\/:*?"<>|]+/g, "-");
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function auditPayload(log) {
+  return log.new_data || log.old_data || {};
+}
+
+function auditWorkDate(log) {
+  return auditPayload(log).work_date || "";
+}
+
+function formatAuditAction(action) {
+  if (action === "INSERT") return "Lancamento";
+  if (action === "UPDATE") return "Correcao";
+  if (action === "DELETE") return "Exclusao";
+  return action || "Alteracao";
+}
+
+function formatAuditChanges(log) {
+  if (log.action === "INSERT") return "Registro criado.";
+  if (log.action === "DELETE") return "Registro apagado.";
+
+  const oldData = log.old_data || {};
+  const newData = log.new_data || {};
+  const fields = [...TIME_FIELDS, "observacao"];
+  const changes = fields
+    .filter((field) => String(oldData[field] || "") !== String(newData[field] || ""))
+    .map((field) => `${field}: ${cleanTime(oldData[field]) || oldData[field] || "--"} -> ${cleanTime(newData[field]) || newData[field] || "--"}`);
+
+  return changes.join(" | ") || "Registro atualizado.";
+}
 function formatAccessDate(value) {
   if (!value) return "";
   return new Date(value).toLocaleDateString("pt-BR");
