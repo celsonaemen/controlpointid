@@ -32,6 +32,16 @@ export async function POST(request) {
   }
 
   const service = createAdminClient();
+  const { data: profile, error: profileError } = await service
+    .from("profiles")
+    .select("active")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError || !profile?.active) {
+    return NextResponse.json({ ok: false }, { status: 403 });
+  }
+
   const now = new Date().toISOString();
   const logId = request.cookies.get(ACCESS_LOG_COOKIE)?.value;
   const response = NextResponse.json({ ok: true });

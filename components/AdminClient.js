@@ -64,6 +64,7 @@ export default function AdminClient({ adminProfile }) {
   const [passwordLoading, setPasswordLoading] = useState("");
   const [credentialPrint, setCredentialPrint] = useState(null);
   const [deletingProfileId, setDeletingProfileId] = useState("");
+  const [blockingProfileId, setBlockingProfileId] = useState("");
   const [deleteModalProfile, setDeleteModalProfile] = useState(null);
   const [deletePrintSheet, setDeletePrintSheet] = useState(null);
   const [accessLogs, setAccessLogs] = useState([]);
@@ -395,6 +396,33 @@ export default function AdminClient({ adminProfile }) {
 
   async function deleteProfile(profile) {
     await performDeleteProfile(profile);
+  }
+
+  async function blockProfileAccess(profile) {
+    if (!profile || blockingProfileId) return;
+
+    const ok = window.confirm(
+      `Bloquear o acesso de ${profile.full_name || profile.email}? O usuario sera desativado e a senha sera trocada por uma senha aleatoria.`
+    );
+    if (!ok) return;
+
+    setBlockingProfileId(profile.id);
+    setMessage("");
+    const response = await fetch(`/api/admin/employees/${profile.id}/block`, { method: "PATCH" });
+    const result = await response.json();
+    setBlockingProfileId("");
+
+    if (!response.ok) {
+      setMessage(result.error || "Nao foi possivel bloquear o acesso.");
+      return;
+    }
+
+    if (selectedUserId === profile.id) setSelectedUserId("");
+    setDeleteModalProfile(null);
+    setDeletePrintSheet(null);
+    setPrintTarget(null);
+    setMessage(result.warning || `Acesso de ${profile.full_name || profile.email} bloqueado. Usuario desativado e senha aleatoria aplicada.`);
+    await loadProfiles();
   }
 
   async function changePassword(profile) {
@@ -1140,17 +1168,21 @@ export default function AdminClient({ adminProfile }) {
               Voce esta apagando {deleteModalProfile.full_name || deleteModalProfile.email}. Para preservar historico, prefira desativar o usuario no campo Ativo.
             </p>
             <p className="modal-copy">
-              Se continuar, os dados vinculados ao usuario podem ser removidos. Deseja imprimir a folha de {formatMonthLabel(month)} antes de apagar?
+              Se o funcionario saiu, use Bloquear acesso primeiro: o usuario fica inativo e a senha e trocada por uma senha aleatoria. Se continuar apagando, os dados vinculados ao usuario podem ser removidos. Deseja imprimir a folha de {formatMonthLabel(month)} antes de apagar?
             </p>
             <div className="modal-actions">
-              <button className="secondary" type="button" onClick={() => setDeleteModalProfile(null)} disabled={Boolean(deletingProfileId)}>
+              <button className="secondary" type="button" onClick={() => setDeleteModalProfile(null)} disabled={Boolean(deletingProfileId) || Boolean(blockingProfileId)}>
                 Cancelar
               </button>
-              <button className="secondary" type="button" onClick={() => printAndDeleteProfile(deleteModalProfile)} disabled={Boolean(deletingProfileId)}>
+              <button className="secondary" type="button" onClick={() => blockProfileAccess(deleteModalProfile)} disabled={Boolean(deletingProfileId) || Boolean(blockingProfileId)}>
+                <Lock size={16} />
+                {blockingProfileId ? "Bloqueando..." : "Bloquear acesso"}
+              </button>
+              <button className="secondary" type="button" onClick={() => printAndDeleteProfile(deleteModalProfile)} disabled={Boolean(deletingProfileId) || Boolean(blockingProfileId)}>
                 <Printer size={16} />
                 Imprimir mes e apagar
               </button>
-              <button className="danger-button" type="button" onClick={() => deleteProfile(deleteModalProfile)} disabled={Boolean(deletingProfileId)}>
+              <button className="danger-button" type="button" onClick={() => deleteProfile(deleteModalProfile)} disabled={Boolean(deletingProfileId) || Boolean(blockingProfileId)}>
                 <Trash2 size={16} />
                 {deletingProfileId ? "Apagando..." : "Apagar sem imprimir"}
               </button>

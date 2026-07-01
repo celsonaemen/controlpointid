@@ -81,6 +81,20 @@ export async function POST(request) {
     );
   }
 
+  const { data: profile, error: profileError } = await service
+    .from("profiles")
+    .select("id, active")
+    .eq("id", data.user.id)
+    .maybeSingle();
+
+  if (profileError || !profile?.active) {
+    await supabase.auth.signOut();
+    return NextResponse.json(
+      { error: "Usuario inativo. Fale com o administrador." },
+      { status: 403 }
+    );
+  }
+
   const now = new Date().toISOString();
   const { data: log } = await service
     .from("access_logs")
