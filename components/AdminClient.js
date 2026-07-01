@@ -398,7 +398,7 @@ export default function AdminClient({ adminProfile }) {
   }
 
   async function changePassword(profile) {
-    const password = passwordEdits[profile.id] || "";
+    const password = String(passwordEdits[profile.id] || "").trim();
 
     if (password.length < 6) {
       setMessage("A nova senha precisa ter pelo menos 6 caracteres.");
@@ -412,6 +412,14 @@ export default function AdminClient({ adminProfile }) {
     if (!success) return;
 
     setPasswordEdits((current) => ({ ...current, [profile.id]: "" }));
+
+    if (profile.id === adminProfile.id) {
+      setMessage("Senha alterada. Entre novamente com a nova senha.");
+      await supabase.auth.signOut();
+      window.location.href = "/login?password_changed=1";
+      return;
+    }
+
     setMessage(`Senha alterada para ${profile.full_name || profile.email}.`);
   }
 
@@ -460,9 +468,13 @@ export default function AdminClient({ adminProfile }) {
     setMessage(`Ficha de acesso preparada para ${profile.full_name || profile.email}.`);
     window.setTimeout(() => {
       window.print();
-      window.setTimeout(() => {
+      window.setTimeout(async () => {
         setPrintTarget(null);
         setCredentialPrint(null);
+        if (profile.id === adminProfile.id) {
+          await supabase.auth.signOut();
+          window.location.href = "/login?password_changed=1";
+        }
       }, 300);
     }, 0);
   }

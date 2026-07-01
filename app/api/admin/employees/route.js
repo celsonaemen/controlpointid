@@ -28,7 +28,7 @@ export async function POST(request) {
 
   const body = await request.json();
   const email = String(body.email || "").trim().toLowerCase();
-  const password = String(body.password || "");
+  const password = String(body.password || "").trim();
   const fullName = String(body.full_name || "").trim();
   const jobTitle = String(body.job_title || "").trim();
   const role = body.role === "admin" ? "admin" : "employee";

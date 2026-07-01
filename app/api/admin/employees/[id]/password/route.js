@@ -27,7 +27,7 @@ export async function PATCH(request, { params }) {
   }
 
   const body = await request.json();
-  const password = String(body.password || "");
+  const password = String(body.password || "").trim();
 
   if (password.length < 6) {
     return NextResponse.json(

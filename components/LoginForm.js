@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LockKeyhole, LogIn } from "lucide-react";
 
-export default function LoginForm({ inactive }) {
+export default function LoginForm({ inactive, passwordChanged }) {
   const router = useRouter();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -69,6 +69,9 @@ export default function LoginForm({ inactive }) {
           </label>
           {inactive ? (
             <div className="notice danger">Usuario inativo. Fale com o administrador.</div>
+          ) : null}
+          {passwordChanged ? (
+            <div className="notice success">Senha alterada. Entre novamente com a nova senha.</div>
           ) : null}
           {message ? <div className="notice danger">{message}</div> : null}
           <button className="primary full" type="submit" disabled={loading}>
