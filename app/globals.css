@@ -684,7 +684,7 @@ h2 {
 .password-reset {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
 }
 
@@ -930,6 +930,36 @@ td:last-child input {
 
   .print-table tfoot td {
     font-weight: 800;
+  }
+
+  .print-credentials {
+    max-width: 170mm;
+    margin: 0 auto;
+    border: 1px solid #000000;
+    padding: 10mm;
+  }
+
+  .credential-card {
+    border: 1px solid #000000;
+    padding: 8mm;
+    margin-top: 8mm;
+    font-size: 13px;
+  }
+
+  .credential-card p {
+    margin: 0 0 5mm;
+  }
+
+  .credential-card p:last-child {
+    margin-bottom: 0;
+  }
+
+  .credential-note {
+    margin-top: 8mm;
+    border: 1px solid #000000;
+    padding: 5mm;
+    font-size: 11px;
+    line-height: 1.4;
   }
 
   .signatures {

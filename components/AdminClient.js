@@ -62,6 +62,7 @@ export default function AdminClient({ adminProfile }) {
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
   const [passwordEdits, setPasswordEdits] = useState({});
   const [passwordLoading, setPasswordLoading] = useState("");
+  const [credentialPrint, setCredentialPrint] = useState(null);
   const [deletingProfileId, setDeletingProfileId] = useState("");
   const [deleteModalProfile, setDeleteModalProfile] = useState(null);
   const [deletePrintSheet, setDeletePrintSheet] = useState(null);
@@ -407,6 +408,14 @@ export default function AdminClient({ adminProfile }) {
     const ok = window.confirm(`Alterar a senha de ${profile.full_name || profile.email}?`);
     if (!ok) return;
 
+    const success = await updateUserPassword(profile, password);
+    if (!success) return;
+
+    setPasswordEdits((current) => ({ ...current, [profile.id]: "" }));
+    setMessage(`Senha alterada para ${profile.full_name || profile.email}.`);
+  }
+
+  async function updateUserPassword(profile, password) {
     setPasswordLoading(profile.id);
     setMessage("");
     const response = await fetch(`/api/admin/employees/${profile.id}/password`, {
@@ -419,11 +428,43 @@ export default function AdminClient({ adminProfile }) {
 
     if (!response.ok) {
       setMessage(result.error || "Nao foi possivel alterar a senha.");
+      return false;
+    }
+
+    return true;
+  }
+
+  async function printUserCredentials(profile) {
+    let password = String(passwordEdits[profile.id] || "").trim();
+
+    if (!password) {
+      const typedPassword = window.prompt("Digite a senha que vai constar na ficha de acesso. Ela sera definida como nova senha do usuario.");
+      if (typedPassword === null) return;
+      password = typedPassword.trim();
+    }
+
+    if (password.length < 6) {
+      setMessage("A senha da ficha precisa ter pelo menos 6 caracteres.");
       return;
     }
 
+    const ok = window.confirm(`Imprimir a ficha de ${profile.full_name || profile.email} e definir esta senha como senha de acesso?`);
+    if (!ok) return;
+
+    const success = await updateUserPassword(profile, password);
+    if (!success) return;
+
     setPasswordEdits((current) => ({ ...current, [profile.id]: "" }));
-    setMessage(`Senha alterada para ${profile.full_name || profile.email}.`);
+    setCredentialPrint({ profile, password, generatedAt: new Date().toISOString() });
+    setPrintTarget("credentials");
+    setMessage(`Ficha de acesso preparada para ${profile.full_name || profile.email}.`);
+    window.setTimeout(() => {
+      window.print();
+      window.setTimeout(() => {
+        setPrintTarget(null);
+        setCredentialPrint(null);
+      }, 300);
+    }, 0);
   }
 
   function updateDraftRecord(dateKey, field, value) {
@@ -846,10 +887,14 @@ export default function AdminClient({ adminProfile }) {
                       {deletingProfileId === profile.id ? "Apagando..." : "Apagar"}
                     </button>
                     <div className="password-reset">
-                      <input type="password" minLength={6} placeholder="Nova senha" value={passwordEdits[profile.id] || ""} onChange={(event) => setPasswordEdits((current) => ({ ...current, [profile.id]: event.target.value }))} />
+                      <input type="password" minLength={6} placeholder="Nova senha / ficha" value={passwordEdits[profile.id] || ""} onChange={(event) => setPasswordEdits((current) => ({ ...current, [profile.id]: event.target.value }))} />
                       <button className="secondary" type="button" onClick={() => changePassword(profile)} disabled={passwordLoading === profile.id || !(passwordEdits[profile.id] || "").trim()}>
                         <KeyRound size={16} />
                         {passwordLoading === profile.id ? "Alterando..." : "Alterar senha"}
+                      </button>
+                      <button className="secondary" type="button" onClick={() => printUserCredentials(profile)} disabled={passwordLoading === profile.id}>
+                        <Printer size={16} />
+                        Imprimir acesso
                       </button>
                     </div>
                   </div>
@@ -1103,6 +1148,7 @@ export default function AdminClient({ adminProfile }) {
       ) : null}
       {printTarget === "sheet" ? <PrintSheet month={month} profile={selectedProfile} days={monthDays} recordsByDate={sheetRecordsByDate} monthTotal={monthTotal} closedAt={closing?.closed_at} /> : null}
       {printTarget === "access" ? <PrintAccessReport month={accessMonth} logs={accessLogs} /> : null}
+      {printTarget === "credentials" && credentialPrint ? <PrintCredentials data={credentialPrint} /> : null}
       {printTarget === "delete-sheet" && deletePrintSheet ? <PrintSheet {...deletePrintSheet} /> : null}
     </main>
   );
@@ -1167,6 +1213,32 @@ function formatAccessTime(value) {
   return new Date(value).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function PrintCredentials({ data }) {
+  const profile = data?.profile || {};
+
+  return (
+    <section className="print-sheet print-credentials">
+      <header className="print-header">
+        <div>
+          <h1>Ficha de Acesso</h1>
+          <p>ControlPoint ID</p>
+        </div>
+        <div><p><strong>Gerado em:</strong> {new Date(data.generatedAt).toLocaleString("pt-BR")}</p></div>
+      </header>
+      <div className="credential-card">
+        <p><strong>Nome:</strong> {profile.full_name || ""}</p>
+        <p><strong>Email de acesso:</strong> {profile.email || ""}</p>
+        <p><strong>Senha:</strong> {data.password}</p>
+        <p><strong>Perfil:</strong> {profile.role === "admin" ? "Administrador" : "Funcionario"}</p>
+        <p><strong>Cargo:</strong> {profile.job_title || ""}</p>
+        <p><strong>Sistema:</strong> https://controlpointid.vercel.app</p>
+      </div>
+      <div className="credential-note">
+        Esta ficha contem dados de acesso. Entregue somente ao usuario responsavel e oriente a guarda em local seguro.
+      </div>
+    </section>
+  );
+}
 function PrintAccessReport({ month, logs }) {
   return (
     <section className="print-sheet">
